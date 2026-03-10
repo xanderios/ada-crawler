@@ -15,8 +15,8 @@ import {
 } from "./output.js";
 
 const BASE = "https://www.orkin.com";
-const MAX_PAGES = 100;
-const PAGE_CONCURRENCY = 5;
+const MAX_PAGES = 30;
+const PAGE_CONCURRENCY = 4;
 
 let stopRequested = false;
 
@@ -47,38 +47,38 @@ async function getSitemapUrls() {
       }
 
       if (parsed.sitemapindex?.sitemap?.length) {
-        const sitemapLinks = parsed.sitemapindex.sitemap
+        const childSitemaps = parsed.sitemapindex.sitemap
           .map((s) => s.loc?.[0])
           .filter(Boolean);
 
-        const allUrls = [];
+        const urls = [];
 
-        for (const childSitemap of sitemapLinks) {
-          if (allUrls.length >= MAX_PAGES) break;
+        for (const child of childSitemaps) {
+          if (urls.length >= MAX_PAGES) break;
 
           try {
-            const childRes = await axios.get(childSitemap, {
+            const childRes = await axios.get(child, {
               timeout: 10000,
               maxRedirects: 5,
               validateStatus: (status) => status >= 200 && status < 400,
             });
 
             const childParsed = await xml2js.parseStringPromise(childRes.data);
-            const urls =
+            const childUrls =
               childParsed.urlset?.url
                 ?.map((u) => u.loc?.[0])
                 .filter(Boolean) || [];
 
-            allUrls.push(...urls);
+            urls.push(...childUrls);
           } catch {
-            // skip bad child sitemap
+            // ignore child sitemap failures
           }
         }
 
-        return [...new Set(allUrls)].slice(0, MAX_PAGES);
+        return [...new Set(urls)].slice(0, MAX_PAGES);
       }
     } catch {
-      // try next sitemap candidate
+      // try next candidate
     }
   }
 
@@ -93,7 +93,7 @@ async function main() {
     process.exit(1);
   }
 
-  const scan = await createScanOutput({
+  await createScanOutput({
     baseUrl: BASE,
     maxPages: urls.length,
   });
@@ -114,38 +114,48 @@ async function main() {
   let nextIndex = 0;
 
   async function worker() {
-    while (true) {
-      if (stopRequested) return;
+    const context = await browser.newContext();
 
-      const currentIndex = nextIndex++;
-      if (currentIndex >= urls.length) return;
+    try {
+      while (true) {
+        if (stopRequested) return;
 
-      const url = urls[currentIndex];
-      const page = await browser.newPage();
+        const currentIndex = nextIndex++;
+        if (currentIndex >= urls.length) return;
 
-      try {
-        await page.goto(url, {
-          timeout: 15000,
-          waitUntil: "domcontentloaded",
-        });
+        const url = urls[currentIndex];
+        const page = await context.newPage();
 
-        const result = await analyzePage(page, url);
-        await appendPageResult(result);
-      } catch (err) {
-        await appendPageResult({
-          url,
-          images: [],
-          videos: [],
-          links: [],
-          scan_error: err?.message || "unknown_error",
-        });
-      } finally {
-        await page.close();
-        await incrementPageScanned();
-        progressBar.increment(1, { stop: stopRequested ? "yes" : "no" });
+        try {
+          await page.goto(url, {
+            timeout: 20000,
+            waitUntil: "domcontentloaded",
+          });
+
+          const result = await analyzePage(page, url);
+          await appendPageResult(result);
+        } catch (err) {
+          await appendPageResult({
+            url,
+            axe: {
+              violations: [],
+              incomplete: [],
+            },
+            custom: {
+              broken_links: [],
+            },
+            scan_error: err?.message || "unknown_error",
+          });
+        } finally {
+          await page.close();
+          await incrementPageScanned();
+          progressBar.increment(1, { stop: stopRequested ? "yes" : "no" });
+        }
       }
+    } finally {
+      await context.close();
     }
-  }
+  }0
 
   try {
     const workers = Array.from({ length: PAGE_CONCURRENCY }, () =>

@@ -1,0 +1,19 @@
+{
+  "name": "crawler",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "crawler.js",
+  "scripts": {
+    "scan": "node crawler.js",
+    "report": "node reportServer.js"
+  },
+  "dependencies": {
+    "@axe-core/playwright": "^4.11.1",
+    "axios": "^1.13.6",
+    "cli-progress": "^3.12.0",
+    "express": "^5.2.1",
+    "p-limit": "^7.3.0",
+    "playwright": "^1.58.2",
+    "xml2js": "^0.6.2"
+  }
+}

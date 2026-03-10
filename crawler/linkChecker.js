@@ -2,7 +2,7 @@ import axios from "axios";
 import pLimit from "p-limit";
 
 const LINK_CONCURRENCY = 10;
-const linkLimit = pLimit(LINK_CONCURRENCY);
+const limit = pLimit(LINK_CONCURRENCY);
 const statusCache = new Map();
 
 function shouldSkipLink(href) {
@@ -16,37 +16,39 @@ function shouldSkipLink(href) {
   );
 }
 
-async function getStatus(href) {
-  if (statusCache.has(href)) return statusCache.get(href);
+async function fetchStatus(href) {
+  if (statusCache.has(href)) {
+    return statusCache.get(href);
+  }
 
   const promise = (async () => {
     try {
-      const headRes = await axios.head(href, {
+      const head = await axios.head(href, {
         timeout: 5000,
         maxRedirects: 5,
         validateStatus: () => true,
       });
 
-      if (headRes.status >= 400) {
-        return { status: headRes.status, ok: false };
+      if (head.status >= 400) {
+        return { ok: false, status: head.status };
       }
 
-      return { status: headRes.status, ok: true };
+      return { ok: true, status: head.status };
     } catch {
       try {
-        const getRes = await axios.get(href, {
+        const get = await axios.get(href, {
           timeout: 5000,
           maxRedirects: 5,
           validateStatus: () => true,
         });
 
-        if (getRes.status >= 400) {
-          return { status: getRes.status, ok: false };
+        if (get.status >= 400) {
+          return { ok: false, status: get.status };
         }
 
-        return { status: getRes.status, ok: true };
+        return { ok: true, status: get.status };
       } catch {
-        return { status: "error", ok: false };
+        return { ok: false, status: "error" };
       }
     }
   })();
@@ -70,12 +72,15 @@ export async function checkLinks(links) {
 
   await Promise.all(
     deduped.map((link) =>
-      linkLimit(async () => {
-        const result = await getStatus(link.href);
+      limit(async () => {
+        const result = await fetchStatus(link.href);
 
         if (!result.ok) {
           issues.push({
-            ...link,
+            href: link.href,
+            text: link.text,
+            rel: link.rel,
+            target: link.target,
             status: result.status,
             issue: "broken_link",
           });

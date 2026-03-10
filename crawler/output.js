@@ -1,5 +1,10 @@
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const OUTPUT_ROOT = path.resolve(__dirname, "..", "output");
 
 let currentScan = null;
 
@@ -7,7 +12,7 @@ function pad(n) {
   return String(n).padStart(2, "0");
 }
 
-function getTimestampParts(date = new Date()) {
+function getFolderKey(date = new Date()) {
   const yyyy = date.getFullYear();
   const mm = pad(date.getMonth() + 1);
   const dd = pad(date.getDate());
@@ -15,10 +20,7 @@ function getTimestampParts(date = new Date()) {
   const mi = pad(date.getMinutes());
   const ss = pad(date.getSeconds());
 
-  return {
-    dateKey: `${yyyy}${mm}${dd}`,
-    folderKey: `${yyyy}${mm}${dd}-${hh}${mi}${ss}`,
-  };
+  return `${yyyy}${mm}${dd}-${hh}${mi}${ss}`;
 }
 
 function ensureDir(dirPath) {
@@ -29,19 +31,29 @@ function writeJson(filePath, data) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
-function appendNdjson(filePath, obj) {
-  fs.appendFileSync(filePath, `${JSON.stringify(obj)}\n`);
+function appendNdjson(filePath, data) {
+  fs.appendFileSync(filePath, `${JSON.stringify(data)}\n`);
 }
 
-function countIssues(page) {
+function findingNodeCount(findings = []) {
+  return findings.reduce((sum, finding) => {
+    const nodes = Array.isArray(finding.nodes) ? finding.nodes.length : 0;
+    return sum + nodes;
+  }, 0);
+}
+
+function countFindings(pageResult) {
+  const violationCount = findingNodeCount(pageResult.axe?.violations || []);
+  const incompleteCount = findingNodeCount(pageResult.axe?.incomplete || []);
+  const brokenLinkCount = Array.isArray(pageResult.custom?.broken_links)
+    ? pageResult.custom.broken_links.length
+    : 0;
+
   return {
-    images: Array.isArray(page.images) ? page.images.length : 0,
-    videos: Array.isArray(page.videos) ? page.videos.length : 0,
-    links: Array.isArray(page.links) ? page.links.length : 0,
-    total:
-      (Array.isArray(page.images) ? page.images.length : 0) +
-      (Array.isArray(page.videos) ? page.videos.length : 0) +
-      (Array.isArray(page.links) ? page.links.length : 0),
+    violations: violationCount,
+    incomplete: incompleteCount,
+    broken_links: brokenLinkCount,
+    total: violationCount + incompleteCount + brokenLinkCount,
   };
 }
 
@@ -56,12 +68,23 @@ function buildSummary(meta) {
   };
 }
 
-export async function createScanOutput({ baseUrl, maxPages }) {
-  const { folderKey } = getTimestampParts();
-  const outputRoot = path.resolve("output");
-  const scanDir = path.join(outputRoot, folderKey);
+function assertScan() {
+  if (!currentScan) {
+    throw new Error("Scan output not initialized");
+  }
+}
 
-  ensureDir(outputRoot);
+function flushMeta() {
+  writeJson(currentScan.metaPath, currentScan.meta);
+  writeJson(currentScan.summaryPath, buildSummary(currentScan.meta));
+}
+
+export async function createScanOutput({ baseUrl, maxPages }) {
+  ensureDir(OUTPUT_ROOT);
+
+  const scanId = getFolderKey();
+  const scanDir = path.join(OUTPUT_ROOT, scanId);
+
   ensureDir(scanDir);
 
   const resultsPath = path.join(scanDir, "results.ndjson");
@@ -71,7 +94,7 @@ export async function createScanOutput({ baseUrl, maxPages }) {
   fs.writeFileSync(resultsPath, "");
 
   const meta = {
-    scan_id: folderKey,
+    scan_id: scanId,
     base_url: baseUrl,
     started_at: new Date().toISOString(),
     finished_at: null,
@@ -84,11 +107,11 @@ export async function createScanOutput({ baseUrl, maxPages }) {
     counts: {
       pages_target: maxPages,
       pages_scanned: 0,
-      pages_with_issues: 0,
-      image_issues: 0,
-      video_issues: 0,
-      link_issues: 0,
-      total_issues: 0,
+      pages_with_findings: 0,
+      axe_violations: 0,
+      axe_incomplete: 0,
+      broken_links: 0,
+      total_findings: 0,
       scan_errors: 0,
     },
   };
@@ -107,31 +130,20 @@ export async function createScanOutput({ baseUrl, maxPages }) {
   return currentScan;
 }
 
-function assertScan() {
-  if (!currentScan) {
-    throw new Error("Scan output not initialized");
-  }
-}
-
-function flushMeta() {
-  writeJson(currentScan.metaPath, currentScan.meta);
-  writeJson(currentScan.summaryPath, buildSummary(currentScan.meta));
-}
-
 export async function appendPageResult(pageResult) {
   assertScan();
 
   appendNdjson(currentScan.resultsPath, pageResult);
 
-  const counts = countIssues(pageResult);
+  const counts = countFindings(pageResult);
 
-  currentScan.meta.counts.image_issues += counts.images;
-  currentScan.meta.counts.video_issues += counts.videos;
-  currentScan.meta.counts.link_issues += counts.links;
-  currentScan.meta.counts.total_issues += counts.total;
+  currentScan.meta.counts.axe_violations += counts.violations;
+  currentScan.meta.counts.axe_incomplete += counts.incomplete;
+  currentScan.meta.counts.broken_links += counts.broken_links;
+  currentScan.meta.counts.total_findings += counts.total;
 
   if (counts.total > 0) {
-    currentScan.meta.counts.pages_with_issues += 1;
+    currentScan.meta.counts.pages_with_findings += 1;
   }
 
   if (pageResult.scan_error) {
