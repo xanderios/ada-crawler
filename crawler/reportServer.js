@@ -36,34 +36,37 @@ function listScanIds() {
     .reverse();
 }
 
-function countNodes(findings = []) {
-  return findings.reduce(
-    (sum, finding) => sum + (Array.isArray(finding.nodes) ? finding.nodes.length : 0),
-    0
-  );
+function countByType(issues = []) {
+  const counts = { error: 0, warning: 0, notice: 0 };
+  for (const issue of issues) {
+    const type = issue.type || "error";
+    if (type in counts) {
+      counts[type] += 1;
+    } else {
+      counts.error += 1;
+    }
+  }
+  return counts;
 }
 
 function normalizePage(page) {
-  const violations = page.axe?.violations || [];
-  const incomplete = page.axe?.incomplete || [];
+  const issues = page.issues || [];
   const brokenLinks = page.custom?.broken_links || [];
+  const byType = countByType(issues);
 
   return {
     url: page.url,
+    runner: page.runner || "unknown",
     scan_error: page.scan_error || null,
     counts: {
-      violations_rules: violations.length,
-      violations_nodes: countNodes(violations),
-      incomplete_rules: incomplete.length,
-      incomplete_nodes: countNodes(incomplete),
+      issues: issues.length,
+      errors: byType.error,
+      warnings: byType.warning,
+      notices: byType.notice,
       broken_links: brokenLinks.length,
-      total_findings:
-        countNodes(violations) + countNodes(incomplete) + brokenLinks.length,
+      total_findings: issues.length + brokenLinks.length,
     },
-    axe: {
-      violations,
-      incomplete,
-    },
+    issues,
     custom: {
       broken_links: brokenLinks,
     },

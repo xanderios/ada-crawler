@@ -3,6 +3,8 @@ import axios from "axios";
 import xml2js from "xml2js";
 import pLimit from "p-limit";
 import cliProgress from "cli-progress";
+import { program } from "commander";
+import { minimatch } from "minimatch";
 
 import { analyzePage } from "./analyzer.js";
 import {
@@ -14,9 +16,91 @@ import {
   markScanFailed,
 } from "./output.js";
 
-const BASE = "https://www.orkin.com";
-const MAX_PAGES = 30;
-const PAGE_CONCURRENCY = 4;
+// CLI setup
+program
+  .name("crawler")
+  .description("ADA accessibility crawler - scans pages for WCAG compliance")
+  .requiredOption("--url <url>", "Base URL to scan (required)")
+  .option("-l, --limit <number>", "Maximum number of pages to scan", (v) => parseInt(v, 10))
+  .option("--runner <runner>", "Accessibility runner (htmlcs or axe)", "htmlcs")
+  .option("--include <patterns...>", "Include URLs matching glob or /regex/ patterns")
+  .option("--exclude <patterns...>", "Exclude URLs matching glob or /regex/ patterns")
+  .option("--same-origin-only", "Only scan URLs from the same origin as --url")
+  .option("--concurrency <number>", "Number of parallel page workers", (v) => parseInt(v, 10), 4)
+  .helpOption("-h, --help", "Display help for command");
+
+program.parse();
+
+const options = program.opts();
+
+// Validate URL
+let baseUrl;
+try {
+  baseUrl = new URL(options.url);
+} catch {
+  console.error(`Error: Invalid URL "${options.url}"`);
+  process.exit(1);
+}
+
+const BASE = baseUrl.origin;
+const RUNNER = options.runner;
+const PAGE_CONCURRENCY = options.concurrency;
+const MAX_PAGES = options.limit; // undefined = no limit
+
+/**
+ * Check if a pattern is a regex (wrapped in /.../)
+ */
+function isRegexPattern(pattern) {
+  return pattern.startsWith("/") && pattern.lastIndexOf("/") > 0;
+}
+
+/**
+ * Parse a pattern string into a matcher function
+ */
+function createMatcher(pattern) {
+  if (isRegexPattern(pattern)) {
+    // Extract regex between slashes and optional flags
+    const lastSlash = pattern.lastIndexOf("/");
+    const regexBody = pattern.slice(1, lastSlash);
+    const flags = pattern.slice(lastSlash + 1);
+    const regex = new RegExp(regexBody, flags);
+    return (url) => regex.test(url);
+  }
+  // Treat as glob pattern
+  return (url) => minimatch(url, pattern);
+}
+
+/**
+ * Filter URLs based on include/exclude patterns and same-origin setting
+ */
+function filterUrls(urls) {
+  const includeMatcher = options.include?.map(createMatcher);
+  const excludeMatcher = options.exclude?.map(createMatcher);
+
+  return urls.filter((url) => {
+    // Same-origin check
+    if (options.sameOriginOnly) {
+      try {
+        const urlOrigin = new URL(url).origin;
+        if (urlOrigin !== BASE) return false;
+      } catch {
+        return false;
+      }
+    }
+
+    // Exclude patterns (if any match, exclude the URL)
+    if (excludeMatcher?.some((matcher) => matcher(url))) {
+      return false;
+    }
+
+    // Include patterns (if specified, at least one must match)
+    if (includeMatcher && !includeMatcher.some((matcher) => matcher(url))) {
+      return false;
+    }
+
+    return true;
+  });
+}
 
 let stopRequested = false;
 
@@ -40,10 +124,11 @@ async function getSitemapUrls() {
       const parsed = await xml2js.parseStringPromise(res.data);
 
       if (parsed.urlset?.url?.length) {
-        return parsed.urlset.url
+        let urls = parsed.urlset.url
           .map((u) => u.loc?.[0])
-          .filter(Boolean)
-          .slice(0, MAX_PAGES);
+          .filter(Boolean);
+        urls = filterUrls(urls);
+        return MAX_PAGES ? urls.slice(0, MAX_PAGES) : urls;
       }
 
       if (parsed.sitemapindex?.sitemap?.length) {
@@ -54,7 +139,7 @@ async function getSitemapUrls() {
         const urls = [];
 
         for (const child of childSitemaps) {
-          if (urls.length >= MAX_PAGES) break;
+          if (MAX_PAGES && urls.length >= MAX_PAGES) break;
 
           try {
             const childRes = await axios.get(child, {
@@ -75,7 +160,9 @@ async function getSitemapUrls() {
           }
         }
 
-        return [...new Set(urls)].slice(0, MAX_PAGES);
+        let uniqueUrls = [...new Set(urls)];
+        uniqueUrls = filterUrls(uniqueUrls);
+        return MAX_PAGES ? uniqueUrls.slice(0, MAX_PAGES) : uniqueUrls;
       }
     } catch {
       // try next candidate
@@ -94,7 +181,7 @@ async function main() {
   }
 
   await createScanOutput({
-    baseUrl: BASE,
+    baseUrl: options.url,
     maxPages: urls.length,
   });
 
@@ -132,19 +219,17 @@ async function main() {
             waitUntil: "domcontentloaded",
           });
 
-          const result = await analyzePage(page, url);
+          const result = await analyzePage(page, url, { runner: RUNNER });
           await appendPageResult(result);
         } catch (err) {
           await appendPageResult({
             url,
-            axe: {
-              violations: [],
-              incomplete: [],
-            },
+            runner: RUNNER,
+            issues: [],
+            scan_error: err?.message || "unknown_error",
             custom: {
               broken_links: [],
             },
-            scan_error: err?.message || "unknown_error",
           });
         } finally {
           await page.close();
@@ -155,7 +240,7 @@ async function main() {
     } finally {
       await context.close();
     }
-  }0
+  }
 
   try {
     const workers = Array.from({ length: PAGE_CONCURRENCY }, () =>

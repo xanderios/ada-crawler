@@ -1,32 +1,36 @@
-import AxeBuilder from "@axe-core/playwright";
+import pa11y from "pa11y";
 import { checkLinks } from "./linkChecker.js";
 
-function compactNode(node) {
+const DEFAULT_RUNNER = "htmlcs";
+
+function normalizeIssue(issue) {
   return {
-    target: Array.isArray(node.target) ? node.target : [],
-    html: node.html || "",
-    failure_summary: node.failureSummary || "",
+    code: issue.code || "",
+    type: issue.type || "error",
+    type_code: issue.typeCode ?? null,
+    message: issue.message || "",
+    selector: issue.selector || "",
+    context: issue.context || "",
+    runner: issue.runner || "",
+    runner_extras: issue.runnerExtras || null,
   };
 }
 
-function compactFinding(finding) {
-  return {
-    id: finding.id,
-    impact: finding.impact || "unknown",
-    description: finding.description,
-    help: finding.help,
-    help_url: finding.helpUrl,
-    tags: Array.isArray(finding.tags) ? finding.tags : [],
-    nodes: Array.isArray(finding.nodes) ? finding.nodes.map(compactNode) : [],
-  };
-}
+export async function analyzePage(page, url, options = {}) {
+  const runner = options.runner || DEFAULT_RUNNER;
 
-export async function analyzePage(page, url) {
-  const axe = new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"])
-    .analyze();
+  const pa11yResult = await pa11y(url, {
+    runner,
+    standard: "WCAG2AA",
+    timeout: 30000,
+    wait: 500,
+    ignore: [],
+  });
 
-  const links = page.$$eval("a[href]", (anchors) =>
+  const issues = (pa11yResult.issues || []).map(normalizeIssue);
+
+  // Extract links from page for broken link checking
+  const links = await page.$$eval("a[href]", (anchors) =>
     anchors.map((a) => ({
       href: a.href,
       text: (a.innerText || a.textContent || "").trim(),
@@ -35,17 +39,13 @@ export async function analyzePage(page, url) {
     }))
   );
 
-  const [axeResults, brokenLinks] = await Promise.all([
-    axe,
-    links.then(checkLinks),
-  ]);
+  const brokenLinks = await checkLinks(links);
 
   return {
     url,
-    axe: {
-      violations: axeResults.violations.map(compactFinding),
-      incomplete: axeResults.incomplete.map(compactFinding),
-    },
+    runner,
+    issues,
+    scan_error: null,
     custom: {
       broken_links: brokenLinks,
     },

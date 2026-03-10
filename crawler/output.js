@@ -35,25 +35,34 @@ function appendNdjson(filePath, data) {
   fs.appendFileSync(filePath, `${JSON.stringify(data)}\n`);
 }
 
-function findingNodeCount(findings = []) {
-  return findings.reduce((sum, finding) => {
-    const nodes = Array.isArray(finding.nodes) ? finding.nodes.length : 0;
-    return sum + nodes;
-  }, 0);
+function countByType(issues = []) {
+  const counts = { error: 0, warning: 0, notice: 0 };
+  for (const issue of issues) {
+    const type = issue.type || "error";
+    if (type in counts) {
+      counts[type] += 1;
+    } else {
+      counts.error += 1;
+    }
+  }
+  return counts;
 }
 
 function countFindings(pageResult) {
-  const violationCount = findingNodeCount(pageResult.axe?.violations || []);
-  const incompleteCount = findingNodeCount(pageResult.axe?.incomplete || []);
+  const issues = Array.isArray(pageResult.issues) ? pageResult.issues : [];
   const brokenLinkCount = Array.isArray(pageResult.custom?.broken_links)
     ? pageResult.custom.broken_links.length
     : 0;
 
+  const byType = countByType(issues);
+
   return {
-    violations: violationCount,
-    incomplete: incompleteCount,
+    issues: issues.length,
+    errors: byType.error,
+    warnings: byType.warning,
+    notices: byType.notice,
     broken_links: brokenLinkCount,
-    total: violationCount + incompleteCount + brokenLinkCount,
+    total: issues.length + brokenLinkCount,
   };
 }
 
@@ -108,8 +117,10 @@ export async function createScanOutput({ baseUrl, maxPages }) {
       pages_target: maxPages,
       pages_scanned: 0,
       pages_with_findings: 0,
-      axe_violations: 0,
-      axe_incomplete: 0,
+      issues: 0,
+      errors: 0,
+      warnings: 0,
+      notices: 0,
       broken_links: 0,
       total_findings: 0,
       scan_errors: 0,
@@ -137,8 +148,10 @@ export async function appendPageResult(pageResult) {
 
   const counts = countFindings(pageResult);
 
-  currentScan.meta.counts.axe_violations += counts.violations;
-  currentScan.meta.counts.axe_incomplete += counts.incomplete;
+  currentScan.meta.counts.issues += counts.issues;
+  currentScan.meta.counts.errors += counts.errors;
+  currentScan.meta.counts.warnings += counts.warnings;
+  currentScan.meta.counts.notices += counts.notices;
   currentScan.meta.counts.broken_links += counts.broken_links;
   currentScan.meta.counts.total_findings += counts.total;
 
