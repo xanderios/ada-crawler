@@ -39,10 +39,9 @@ function App() {
 
   // Scan-level filters
   const [statusFilter, setStatusFilter] = useState("all");
-  const [typeFilter, setTypeFilter] = useState("all");
   const [pageSearch, setPageSearch] = useState("");
 
-  // Page-level filters
+  // Issue-level filters (unified)
   const [issueTypeFilter, setIssueTypeFilter] = useState("all");
   const [issueCodeSearch, setIssueCodeSearch] = useState("");
   const [issueMessageSearch, setIssueMessageSearch] = useState("");
@@ -93,7 +92,6 @@ function App() {
       limit: pageLimit,
       url: debouncedPageSearch,
       status: statusFilter,
-      type: typeFilter,
       issueType: issueTypeFilter,
       issueCode: debouncedIssueCode,
       issueMessage: debouncedIssueMessage,
@@ -108,12 +106,12 @@ function App() {
         setFilteredSummary(data.filteredSummary);
         setPagesLoading(false);
       });
-  }, [scanId, currentPage, pageLimit, debouncedPageSearch, statusFilter, typeFilter, issueTypeFilter, debouncedIssueCode, debouncedIssueMessage]);
+  }, [scanId, currentPage, pageLimit, debouncedPageSearch, statusFilter, issueTypeFilter, debouncedIssueCode, debouncedIssueMessage]);
 
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [debouncedPageSearch, statusFilter, typeFilter, issueTypeFilter, debouncedIssueCode, debouncedIssueMessage]);
+  }, [debouncedPageSearch, statusFilter, issueTypeFilter, debouncedIssueCode, debouncedIssueMessage]);
 
   // Refresh handler
   const handleRefresh = async () => {
@@ -129,9 +127,8 @@ function App() {
   };
 
   // Check if any filters are active
-  const hasAnyFilters = pageSearch || statusFilter !== "all" || typeFilter !== "all" ||
+  const hasAnyFilters = pageSearch || statusFilter !== "all" ||
     issueTypeFilter !== "all" || issueCodeSearch || issueMessageSearch;
-  const hasActiveIssueFilters = issueTypeFilter !== "all" || issueCodeSearch || issueMessageSearch;
 
   // Export handler
   const handleExport = async () => {
@@ -141,7 +138,6 @@ function App() {
     const params = new URLSearchParams({
       url: debouncedPageSearch,
       status: statusFilter,
-      type: typeFilter,
       issueType: issueTypeFilter,
       issueCode: debouncedIssueCode,
       issueMessage: debouncedIssueMessage,
@@ -217,7 +213,7 @@ function App() {
 
           <BlurFade delay={0.1}>
             <div className="mt-6 mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Scan Filters
+              Filters
             </div>
           </BlurFade>
 
@@ -237,17 +233,17 @@ function App() {
           </BlurFade>
 
           <BlurFade delay={0.2}>
-            <FilterField label="Finding Type">
+            <FilterField label="Issue Type">
               <select
-                value={typeFilter}
-                onChange={(e) => setTypeFilter(e.target.value)}
+                value={issueTypeFilter}
+                onChange={(e) => setIssueTypeFilter(e.target.value)}
                 className="w-full p-2 rounded-md bg-input border border-border text-foreground focus:ring-2 focus:ring-primary/50 focus:outline-none"
               >
                 <option value="all">All types</option>
-                <option value="errors">Errors only</option>
-                <option value="warnings">Warnings only</option>
-                <option value="notices">Notices only</option>
-                <option value="broken_links">Broken links</option>
+                <option value="error">Errors</option>
+                <option value="warning">Warnings</option>
+                <option value="notice">Notices</option>
+                <option value="broken_link">Broken Links</option>
               </select>
             </FilterField>
           </BlurFade>
@@ -263,48 +259,31 @@ function App() {
             </FilterField>
           </BlurFade>
 
-          <BlurFade delay={0.3}>
-            <div className="mt-6 mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Issue Filters (per page)
-            </div>
-          </BlurFade>
+          {issueTypeFilter !== "broken_link" && (
+            <>
+              <BlurFade delay={0.3}>
+                <FilterField label="Issue Code">
+                  <input
+                    value={issueCodeSearch}
+                    onChange={(e) => setIssueCodeSearch(e.target.value)}
+                    placeholder="Filter by code..."
+                    className="w-full p-2 rounded-md bg-input border border-border text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/50 focus:outline-none"
+                  />
+                </FilterField>
+              </BlurFade>
 
-          <BlurFade delay={0.35}>
-            <FilterField label="Issue Type">
-              <select
-                value={issueTypeFilter}
-                onChange={(e) => setIssueTypeFilter(e.target.value)}
-                className="w-full p-2 rounded-md bg-input border border-border text-foreground focus:ring-2 focus:ring-primary/50 focus:outline-none"
-              >
-                <option value="all">All types</option>
-                <option value="error">Errors</option>
-                <option value="warning">Warnings</option>
-                <option value="notice">Notices</option>
-              </select>
-            </FilterField>
-          </BlurFade>
-
-          <BlurFade delay={0.4}>
-            <FilterField label="Issue Code">
-              <input
-                value={issueCodeSearch}
-                onChange={(e) => setIssueCodeSearch(e.target.value)}
-                placeholder="Filter by code..."
-                className="w-full p-2 rounded-md bg-input border border-border text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/50 focus:outline-none"
-              />
-            </FilterField>
-          </BlurFade>
-
-          <BlurFade delay={0.45}>
-            <FilterField label="Message / Selector">
-              <input
-                value={issueMessageSearch}
-                onChange={(e) => setIssueMessageSearch(e.target.value)}
-                placeholder="Search in message or selector..."
-                className="w-full p-2 rounded-md bg-input border border-border text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/50 focus:outline-none"
-              />
-            </FilterField>
-          </BlurFade>
+              <BlurFade delay={0.35}>
+                <FilterField label="Message / Selector">
+                  <input
+                    value={issueMessageSearch}
+                    onChange={(e) => setIssueMessageSearch(e.target.value)}
+                    placeholder="Search in message or selector..."
+                    className="w-full p-2 rounded-md bg-input border border-border text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/50 focus:outline-none"
+                  />
+                </FilterField>
+              </BlurFade>
+            </>
+          )}
 
           <BlurFade delay={0.5}>
             <div className="mt-6 text-xs text-muted-foreground">
@@ -425,7 +404,7 @@ function App() {
                           page={page}
                           filteredIssues={page.issues}
                           filteredCounts={page.filteredCounts || null}
-                          hasActiveIssueFilters={hasActiveIssueFilters}
+                          issueTypeFilter={issueTypeFilter}
                         />
                       </BlurFade>
                     ))}
@@ -552,8 +531,12 @@ function StatCardInner({ label, value, variant, small }) {
   );
 }
 
-function PageCard({ page, filteredIssues, filteredCounts, hasActiveIssueFilters }) {
+function PageCard({ page, filteredIssues, filteredCounts, issueTypeFilter }) {
   const displayCounts = filteredCounts || page.counts;
+  const showIssues = issueTypeFilter !== "broken_link";
+  const showBrokenLinks = issueTypeFilter === "all" || issueTypeFilter === "broken_link";
+  const hasActiveFilters = issueTypeFilter !== "all";
+
   return (
     <details className="group rounded-lg border border-border bg-card/60 backdrop-blur-sm overflow-hidden">
       <summary className="cursor-pointer p-4 hover:bg-muted/30 transition-colors list-none">
@@ -561,10 +544,16 @@ function PageCard({ page, filteredIssues, filteredCounts, hasActiveIssueFilters 
           <div className="font-medium text-sm break-all">{page.url}</div>
           <div className="flex flex-wrap gap-2">
             <Badge>{page.runner}</Badge>
-            <Badge variant="error">{displayCounts.errors} errors</Badge>
-            <Badge variant="warning">{displayCounts.warnings} warnings</Badge>
-            <Badge variant="info">{displayCounts.notices} notices</Badge>
-            {!hasActiveIssueFilters && <Badge>{page.counts.broken_links} broken</Badge>}
+            {showIssues && (
+              <>
+                <Badge variant="error">{displayCounts.errors} errors</Badge>
+                <Badge variant="warning">{displayCounts.warnings} warnings</Badge>
+                <Badge variant="info">{displayCounts.notices} notices</Badge>
+              </>
+            )}
+            {showBrokenLinks && (
+              <Badge>{displayCounts.brokenLinks ?? page.counts.broken_links} broken</Badge>
+            )}
             {page.scan_error && <Badge variant="destructive">scan error</Badge>}
           </div>
         </div>
@@ -578,55 +567,57 @@ function PageCard({ page, filteredIssues, filteredCounts, hasActiveIssueFilters 
         )}
 
         {/* Accessibility Issues */}
-        <div>
-          <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-            Accessibility Issues
-            <span className="text-xs font-normal text-muted-foreground">
-              ({filteredIssues.length}{hasActiveIssueFilters ? ` of ${page.issues.length}` : ""})
-            </span>
-          </h3>
-          {filteredIssues.length === 0 ? (
-            <div className="text-sm text-muted-foreground py-2">
-              {hasActiveIssueFilters ? "No issues match filters" : "No issues found"}
-            </div>
-          ) : (
-            <div className="rounded-md border border-border overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-muted/50 text-left">
-                    <th className="p-2 font-medium">Type</th>
-                    <th className="p-2 font-medium">Code</th>
-                    <th className="p-2 font-medium">Message</th>
-                    <th className="p-2 font-medium hidden lg:table-cell">Selector</th>
-                    <th className="p-2 font-medium hidden xl:table-cell">Context</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredIssues.map((issue, idx) => (
-                    <tr
-                      key={idx}
-                      className={cn(
-                        "border-t border-border hover:bg-muted/20 transition-colors",
-                        issue.type === "error" && "border-l-2 border-l-destructive",
-                        issue.type === "warning" && "border-l-2 border-l-warning",
-                        issue.type === "notice" && "border-l-2 border-l-info"
-                      )}
-                    >
-                      <td className="p-2"><TypeBadge type={issue.type} /></td>
-                      <td className="p-2 font-mono text-xs max-w-[200px] break-all">{issue.code}</td>
-                      <td className="p-2 text-xs">{issue.message}</td>
-                      <td className="p-2 font-mono text-xs max-w-[150px] break-all hidden lg:table-cell">{issue.selector}</td>
-                      <td className="p-2 font-mono text-xs max-w-[200px] break-all hidden xl:table-cell">{issue.context}</td>
+        {showIssues && (
+          <div>
+            <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+              Accessibility Issues
+              <span className="text-xs font-normal text-muted-foreground">
+                ({filteredIssues.length})
+              </span>
+            </h3>
+            {filteredIssues.length === 0 ? (
+              <div className="text-sm text-muted-foreground py-2">
+                {hasActiveFilters ? "No issues match filters" : "No issues found"}
+              </div>
+            ) : (
+              <div className="rounded-md border border-border overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-muted/50 text-left">
+                      <th className="p-2 font-medium">Type</th>
+                      <th className="p-2 font-medium">Code</th>
+                      <th className="p-2 font-medium">Message</th>
+                      <th className="p-2 font-medium hidden lg:table-cell">Selector</th>
+                      <th className="p-2 font-medium hidden xl:table-cell">Context</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+                  </thead>
+                  <tbody>
+                    {filteredIssues.map((issue, idx) => (
+                      <tr
+                        key={idx}
+                        className={cn(
+                          "border-t border-border hover:bg-muted/20 transition-colors",
+                          issue.type === "error" && "border-l-2 border-l-destructive",
+                          issue.type === "warning" && "border-l-2 border-l-warning",
+                          issue.type === "notice" && "border-l-2 border-l-info"
+                        )}
+                      >
+                        <td className="p-2"><TypeBadge type={issue.type} /></td>
+                        <td className="p-2 font-mono text-xs max-w-[200px] break-all">{issue.code}</td>
+                        <td className="p-2 text-xs">{issue.message}</td>
+                        <td className="p-2 font-mono text-xs max-w-[150px] break-all hidden lg:table-cell">{issue.selector}</td>
+                        <td className="p-2 font-mono text-xs max-w-[200px] break-all hidden xl:table-cell">{issue.context}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Broken Links */}
-        {page.custom.broken_links.length > 0 && (
+        {showBrokenLinks && page.custom.broken_links.length > 0 && (
           <div>
             <h3 className="text-sm font-semibold mb-3">
               Broken Links <span className="text-xs font-normal text-muted-foreground">({page.custom.broken_links.length})</span>

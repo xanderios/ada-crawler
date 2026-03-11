@@ -1,7 +1,6 @@
-import axios from "axios";
 import pLimit from "p-limit";
 
-const LINK_CONCURRENCY = 10;
+const LINK_CONCURRENCY = 5;
 const limit = pLimit(LINK_CONCURRENCY);
 const statusCache = new Map();
 
@@ -16,39 +15,35 @@ function shouldSkipLink(href) {
   );
 }
 
-async function fetchStatus(href) {
+async function fetchStatusWithBrowser(href, context) {
   if (statusCache.has(href)) {
     return statusCache.get(href);
   }
 
   const promise = (async () => {
+    let page;
     try {
-      const head = await axios.head(href, {
-        timeout: 5000,
-        maxRedirects: 5,
-        validateStatus: () => true,
+      page = await context.newPage();
+
+      const response = await page.goto(href, {
+        waitUntil: "domcontentloaded",
+        timeout: 15000,
       });
 
-      if (head.status >= 400) {
-        return { ok: false, status: head.status };
+      const status = response?.status() ?? 0;
+
+      // Consider 2xx and 3xx as OK
+      if (status >= 200 && status < 400) {
+        return { ok: true, status };
       }
 
-      return { ok: true, status: head.status };
-    } catch {
-      try {
-        const get = await axios.get(href, {
-          timeout: 5000,
-          maxRedirects: 5,
-          validateStatus: () => true,
-        });
-
-        if (get.status >= 400) {
-          return { ok: false, status: get.status };
-        }
-
-        return { ok: true, status: get.status };
-      } catch {
-        return { ok: false, status: "error" };
+      return { ok: false, status };
+    } catch (err) {
+      // Timeout or navigation error
+      return { ok: false, status: "error" };
+    } finally {
+      if (page) {
+        await page.close().catch(() => {});
       }
     }
   })();
@@ -57,7 +52,12 @@ async function fetchStatus(href) {
   return promise;
 }
 
-export async function checkLinks(links) {
+/**
+ * Check links using a Playwright browser context
+ * @param {Array} links - Array of link objects with href, text, etc.
+ * @param {BrowserContext} context - Playwright browser context
+ */
+export async function checkLinks(links, context) {
   const deduped = [];
   const seen = new Set();
 
@@ -73,7 +73,7 @@ export async function checkLinks(links) {
   await Promise.all(
     deduped.map((link) =>
       limit(async () => {
-        const result = await fetchStatus(link.href);
+        const result = await fetchStatusWithBrowser(link.href, context);
 
         if (!result.ok) {
           issues.push({

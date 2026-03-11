@@ -120,15 +120,16 @@ function filterIssues(issues, { issueType, issueCode, issueMessage }) {
 }
 
 /**
- * Recalculate counts for filtered issues
+ * Recalculate counts for filtered issues and broken links
  */
-function getFilteredCounts(issues) {
+function getFilteredCounts(issues, brokenLinks = 0) {
   const byType = countByType(issues);
   return {
     total: issues.length,
     errors: byType.error,
     warnings: byType.warning,
     notices: byType.notice,
+    brokenLinks,
   };
 }
 
@@ -136,8 +137,7 @@ function getFilteredCounts(issues) {
  * Filter pages based on query params
  */
 function filterPages(pages, query) {
-  const { url, status, type, issueType, issueCode, issueMessage } = query;
-  const hasIssueFilters = (issueType && issueType !== "all") || issueCode || issueMessage;
+  const { url, status, issueType, issueCode, issueMessage } = query;
 
   return pages.filter((page) => {
     // URL filter
@@ -148,14 +148,18 @@ function filterPages(pages, query) {
     if (status === "without_findings" && page.counts.total_findings > 0) return false;
     if (status === "errors_only" && !page.scan_error) return false;
 
-    // Type filter (page must have at least one of that type)
-    if (type === "errors" && page.counts.errors === 0) return false;
-    if (type === "warnings" && page.counts.warnings === 0) return false;
-    if (type === "notices" && page.counts.notices === 0) return false;
-    if (type === "broken_links" && page.counts.broken_links === 0) return false;
-
-    // Issue-level filters: page must have at least one matching issue
-    if (hasIssueFilters) {
+    // Issue type filter: page must have at least one matching item
+    if (issueType && issueType !== "all") {
+      if (issueType === "broken_link") {
+        // For broken links, check if page has any broken links
+        if (page.counts.broken_links === 0) return false;
+      } else {
+        // For accessibility issues, filter and check if any match
+        const filtered = filterIssues(page.issues, { issueType, issueCode, issueMessage });
+        if (filtered.length === 0) return false;
+      }
+    } else if (issueCode || issueMessage) {
+      // If only search filters (no type), still apply them to accessibility issues
       const filtered = filterIssues(page.issues, { issueType, issueCode, issueMessage });
       if (filtered.length === 0) return false;
     }
@@ -169,27 +173,34 @@ function filterPages(pages, query) {
  */
 function computeFilteredSummary(pages, query) {
   const { issueType, issueCode, issueMessage } = query;
-  const hasIssueFilters = (issueType && issueType !== "all") || issueCode || issueMessage;
 
   let issues = 0, errors = 0, warnings = 0, notices = 0, brokenLinks = 0, scanErrors = 0, pagesWithFindings = 0;
 
   for (const page of pages) {
-    if (hasIssueFilters) {
+    // If filtering by "broken_link" type specifically
+    if (issueType === "broken_link") {
+      brokenLinks += page.counts.broken_links;
+      if (page.counts.broken_links > 0) pagesWithFindings++;
+    }
+    // If filtering by accessibility issue type or searching within issues
+    else if ((issueType && issueType !== "all") || issueCode || issueMessage) {
       const filtered = filterIssues(page.issues, { issueType, issueCode, issueMessage });
-      const counts = getFilteredCounts(filtered);
+      const counts = getFilteredCounts(filtered, 0);
       issues += counts.total;
       errors += counts.errors;
       warnings += counts.warnings;
       notices += counts.notices;
       if (counts.total > 0) pagesWithFindings++;
-    } else {
+    }
+    // No filters - show everything
+    else {
       issues += page.counts.issues;
       errors += page.counts.errors;
       warnings += page.counts.warnings;
       notices += page.counts.notices;
+      brokenLinks += page.counts.broken_links;
       if (page.counts.total_findings > 0) pagesWithFindings++;
     }
-    brokenLinks += page.counts.broken_links;
     if (page.scan_error) scanErrors++;
   }
 
@@ -262,7 +273,6 @@ router.get("/scans/:scanId/pages", (req, res) => {
   const query = {
     url: req.query.url || "",
     status: req.query.status || "all",
-    type: req.query.type || "all",
     issueType: req.query.issueType || "all",
     issueCode: req.query.issueCode || "",
     issueMessage: req.query.issueMessage || "",
@@ -282,17 +292,26 @@ router.get("/scans/:scanId/pages", (req, res) => {
   const startIndex = (page - 1) * limit;
   const paginatedPages = filteredPages.slice(startIndex, startIndex + limit);
 
-  // For paginated pages, also filter their issues if issue filters are active
+  // For paginated pages, filter their issues based on active filters
   const { issueType, issueCode, issueMessage } = query;
-  const hasIssueFilters = (issueType && issueType !== "all") || issueCode || issueMessage;
 
   const responsePages = paginatedPages.map((p) => {
-    if (hasIssueFilters) {
+    // If filtering by broken links only, hide accessibility issues
+    if (issueType === "broken_link") {
+      return {
+        ...p,
+        issues: [],
+        filteredCounts: getFilteredCounts([], p.counts.broken_links),
+      };
+    }
+    // If filtering accessibility issues
+    if ((issueType && issueType !== "all") || issueCode || issueMessage) {
       const filteredIssues = filterIssues(p.issues, { issueType, issueCode, issueMessage });
-      const filteredCounts = getFilteredCounts(filteredIssues);
+      const filteredCounts = getFilteredCounts(filteredIssues, 0);
       return {
         ...p,
         issues: filteredIssues,
+        custom: { broken_links: [] }, // Hide broken links
         filteredCounts,
       };
     }
@@ -325,7 +344,6 @@ router.get("/scans/:scanId/export", (req, res) => {
   const query = {
     url: req.query.url || "",
     status: req.query.status || "all",
-    type: req.query.type || "all",
     issueType: req.query.issueType || "all",
     issueCode: req.query.issueCode || "",
     issueMessage: req.query.issueMessage || "",

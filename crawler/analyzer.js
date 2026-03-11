@@ -41,7 +41,9 @@ export async function analyzePage(page, url, options = {}) {
     }))
   );
 
-  const brokenLinks = await checkLinks(links);
+  // Get browser context from the page for link checking
+  const context = page.context();
+  const brokenLinks = await checkLinks(links, context);
 
   return {
     url,

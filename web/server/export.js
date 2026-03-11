@@ -7,48 +7,55 @@ import * as XLSX from "xlsx";
 export function flattenPagesToRows(pages, query = {}) {
   const rows = [];
   const { issueType, issueCode, issueMessage } = query;
-  const hasIssueFilters = (issueType && issueType !== "all") || issueCode || issueMessage;
+  const isBrokenLinkFilter = issueType === "broken_link";
+  const hasAccessibilityFilters = (issueType && issueType !== "all" && issueType !== "broken_link") || issueCode || issueMessage;
 
   for (const page of pages) {
-    // Get issues (possibly filtered)
-    let issues = page.issues || [];
-    if (hasIssueFilters) {
-      issues = filterIssuesForExport(issues, { issueType, issueCode, issueMessage });
+    // Export accessibility issues (unless filtering for broken_link only)
+    if (!isBrokenLinkFilter) {
+      let issues = page.issues || [];
+      if (hasAccessibilityFilters) {
+        issues = filterIssuesForExport(issues, { issueType, issueCode, issueMessage });
+      }
+
+      for (const issue of issues) {
+        rows.push({
+          page_url: page.url,
+          scan_error: page.scan_error || "",
+          issue_type: issue.type || "error",
+          issue_code: issue.code || "",
+          issue_message: issue.message || "",
+          issue_selector: issue.selector || "",
+          issue_context: issue.context || "",
+          broken_link_href: "",
+          broken_link_status: "",
+        });
+      }
     }
 
-    // Add row for each accessibility issue
-    for (const issue of issues) {
-      rows.push({
-        page_url: page.url,
-        scan_error: page.scan_error || "",
-        issue_type: issue.type || "error",
-        issue_code: issue.code || "",
-        issue_message: issue.message || "",
-        issue_selector: issue.selector || "",
-        issue_context: issue.context || "",
-        broken_link_href: "",
-        broken_link_status: "",
-      });
+    // Export broken links (only if no accessibility type filter, or specifically filtering for broken_link)
+    if (!hasAccessibilityFilters) {
+      const brokenLinks = page.custom?.broken_links || [];
+      for (const link of brokenLinks) {
+        rows.push({
+          page_url: page.url,
+          scan_error: page.scan_error || "",
+          issue_type: "broken_link",
+          issue_code: "",
+          issue_message: link.text || "",
+          issue_selector: "",
+          issue_context: "",
+          broken_link_href: link.href || "",
+          broken_link_status: String(link.status) || "",
+        });
+      }
     }
 
-    // Add row for each broken link (if not filtering by issue type, or filtering for broken_links)
-    const brokenLinks = page.custom?.broken_links || [];
-    for (const link of brokenLinks) {
-      rows.push({
-        page_url: page.url,
-        scan_error: page.scan_error || "",
-        issue_type: "broken_link",
-        issue_code: "",
-        issue_message: link.text || "",
-        issue_selector: "",
-        issue_context: "",
-        broken_link_href: link.href || "",
-        broken_link_status: String(link.status) || "",
-      });
-    }
+    // If page has no exported items but has a scan error, add a row for the error
+    const exportedIssues = isBrokenLinkFilter ? 0 : (hasAccessibilityFilters ? filterIssuesForExport(page.issues || [], { issueType, issueCode, issueMessage }).length : (page.issues || []).length);
+    const exportedLinks = hasAccessibilityFilters ? 0 : (page.custom?.broken_links || []).length;
 
-    // If page has no issues/links but has a scan error, add a row for the error
-    if (issues.length === 0 && brokenLinks.length === 0 && page.scan_error) {
+    if (exportedIssues === 0 && exportedLinks === 0 && page.scan_error) {
       rows.push({
         page_url: page.url,
         scan_error: page.scan_error,
