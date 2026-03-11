@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { NumberTicker } from "./components/ui/number-ticker";
 import { ShimmerCard, GlowCard } from "./components/ui/shimmer-card";
 import { BlurFade } from "./components/ui/blur-fade";
@@ -10,127 +10,162 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleString();
 }
 
+// Debounce hook for search inputs
+function useDebounce(value, delay) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  useEffect(() => {
+    const handler = setTimeout(() => setDebouncedValue(value), delay);
+    return () => clearTimeout(handler);
+  }, [value, delay]);
+  return debouncedValue;
+}
+
 function App() {
   // Scan-level state
   const [scans, setScans] = useState([]);
   const [scanId, setScanId] = useState("");
   const [scanData, setScanData] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-  // Scan-level filters (persist across scan changes)
+  // Pages data from server (paginated)
+  const [pages, setPages] = useState([]);
+  const [pagination, setPagination] = useState(null);
+  const [filteredSummary, setFilteredSummary] = useState(null);
+  const [pagesLoading, setPagesLoading] = useState(false);
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageLimit] = useState(100);
+
+  // Scan-level filters
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [pageSearch, setPageSearch] = useState("");
 
-  // Page-level filters (persist across scan/page changes)
+  // Page-level filters
   const [issueTypeFilter, setIssueTypeFilter] = useState("all");
   const [issueCodeSearch, setIssueCodeSearch] = useState("");
   const [issueMessageSearch, setIssueMessageSearch] = useState("");
 
-  useEffect(() => {
+  // Export state
+  const [exportFormat, setExportFormat] = useState("xlsx");
+  const [exporting, setExporting] = useState(false);
+
+  // Debounced search values (300ms delay)
+  const debouncedPageSearch = useDebounce(pageSearch, 300);
+  const debouncedIssueCode = useDebounce(issueCodeSearch, 300);
+  const debouncedIssueMessage = useDebounce(issueMessageSearch, 300);
+
+  // Fetch scans list
+  const fetchScans = useCallback(() => {
     fetch("/api/scans")
       .then((res) => res.json())
       .then((data) => {
         setScans(data);
-        if (data.length) {
+        if (data.length && !scanId) {
           setScanId(data[0].scan_id);
         }
       });
-  }, []);
-
-  useEffect(() => {
-    if (!scanId) return;
-    fetch(`/api/scans/${encodeURIComponent(scanId)}`)
-      .then((res) => res.json())
-      .then((data) => setScanData(data));
   }, [scanId]);
 
-  // Check if any issue-level filters are active
+  useEffect(() => {
+    fetchScans();
+  }, []);
+
+  // Fetch scan metadata when scanId changes
+  useEffect(() => {
+    if (!scanId) return;
+    setLoading(true);
+    fetch(`/api/scans/${encodeURIComponent(scanId)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        setScanData(data);
+        setLoading(false);
+      });
+  }, [scanId]);
+
+  // Fetch pages when scan, filters, or pagination changes
+  useEffect(() => {
+    if (!scanId) return;
+
+    const params = new URLSearchParams({
+      page: currentPage,
+      limit: pageLimit,
+      url: debouncedPageSearch,
+      status: statusFilter,
+      type: typeFilter,
+      issueType: issueTypeFilter,
+      issueCode: debouncedIssueCode,
+      issueMessage: debouncedIssueMessage,
+    });
+
+    setPagesLoading(true);
+    fetch(`/api/scans/${encodeURIComponent(scanId)}/pages?${params}`)
+      .then((res) => res.json())
+      .then((data) => {
+        setPages(data.pages);
+        setPagination(data.pagination);
+        setFilteredSummary(data.filteredSummary);
+        setPagesLoading(false);
+      });
+  }, [scanId, currentPage, pageLimit, debouncedPageSearch, statusFilter, typeFilter, issueTypeFilter, debouncedIssueCode, debouncedIssueMessage]);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [debouncedPageSearch, statusFilter, typeFilter, issueTypeFilter, debouncedIssueCode, debouncedIssueMessage]);
+
+  // Refresh handler
+  const handleRefresh = async () => {
+    if (!scanId) return;
+    await fetch(`/api/scans/${encodeURIComponent(scanId)}/refresh`, { method: "POST" });
+    fetchScans();
+    // Re-fetch scan data
+    const res = await fetch(`/api/scans/${encodeURIComponent(scanId)}`);
+    const data = await res.json();
+    setScanData(data);
+    // Re-fetch pages
+    setCurrentPage(1);
+  };
+
+  // Check if any filters are active
+  const hasAnyFilters = pageSearch || statusFilter !== "all" || typeFilter !== "all" ||
+    issueTypeFilter !== "all" || issueCodeSearch || issueMessageSearch;
   const hasActiveIssueFilters = issueTypeFilter !== "all" || issueCodeSearch || issueMessageSearch;
 
-  // Filter issues for a single page (page-level)
-  const filterIssues = (issues) => {
-    return issues.filter((issue) => {
-      if (issueTypeFilter !== "all" && issue.type !== issueTypeFilter) return false;
-      const codeQ = issueCodeSearch.trim().toLowerCase();
-      if (codeQ && !issue.code.toLowerCase().includes(codeQ)) return false;
-      const msgQ = issueMessageSearch.trim().toLowerCase();
-      if (msgQ) {
-        const inMessage = issue.message?.toLowerCase().includes(msgQ);
-        const inSelector = issue.selector?.toLowerCase().includes(msgQ);
-        if (!inMessage && !inSelector) return false;
-      }
-      return true;
+  // Export handler
+  const handleExport = async () => {
+    if (!scanId) return;
+    setExporting(true);
+
+    const params = new URLSearchParams({
+      url: debouncedPageSearch,
+      status: statusFilter,
+      type: typeFilter,
+      issueType: issueTypeFilter,
+      issueCode: debouncedIssueCode,
+      issueMessage: debouncedIssueMessage,
+      format: exportFormat,
     });
-  };
 
-  // Compute filtered counts for issues
-  const getFilteredCounts = (issues) => {
-    const filtered = filterIssues(issues);
-    return {
-      total: filtered.length,
-      errors: filtered.filter(i => i.type === "error").length,
-      warnings: filtered.filter(i => i.type === "warning").length,
-      notices: filtered.filter(i => i.type === "notice").length,
-    };
-  };
-
-  // Filtered pages (scan-level)
-  const pages = useMemo(() => {
-    if (!scanData?.pages) return [];
-
-    return scanData.pages
-      .filter((page) => {
-        const q = pageSearch.trim().toLowerCase();
-        if (q && !page.url.toLowerCase().includes(q)) return false;
-        if (statusFilter === "with_findings" && page.counts.total_findings === 0) return false;
-        if (statusFilter === "without_findings" && page.counts.total_findings > 0) return false;
-        if (statusFilter === "errors_only" && !page.scan_error) return false;
-        if (typeFilter === "errors" && page.counts.errors === 0) return false;
-        if (typeFilter === "warnings" && page.counts.warnings === 0) return false;
-        if (typeFilter === "notices" && page.counts.notices === 0) return false;
-        if (typeFilter === "broken_links" && page.counts.broken_links === 0) return false;
-        // When issue filters are active, only show pages with matching issues
-        if (hasActiveIssueFilters && filterIssues(page.issues || []).length === 0) return false;
-        return true;
-      })
-      .sort((a, b) => b.counts.total_findings - a.counts.total_findings);
-  }, [scanData, pageSearch, statusFilter, typeFilter, hasActiveIssueFilters, issueTypeFilter, issueCodeSearch, issueMessageSearch]);
-
-  // Compute filtered summary stats
-  const filteredSummary = useMemo(() => {
-    if (!pages.length) {
-      return { pages: 0, pagesWithFindings: 0, issues: 0, errors: 0, warnings: 0, notices: 0, brokenLinks: 0, scanErrors: 0 };
+    try {
+      const url = `/api/scans/${encodeURIComponent(scanId)}/export?${params}`;
+      // Trigger download via hidden link
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `ada-scan-${scanId}.${exportFormat}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (error) {
+      console.error("Export failed:", error);
+    } finally {
+      setExporting(false);
     }
-
-    let issues = 0, errors = 0, warnings = 0, notices = 0, brokenLinks = 0, scanErrors = 0, pagesWithFindings = 0;
-
-    for (const page of pages) {
-      if (hasActiveIssueFilters) {
-        const counts = getFilteredCounts(page.issues || []);
-        issues += counts.total;
-        errors += counts.errors;
-        warnings += counts.warnings;
-        notices += counts.notices;
-        if (counts.total > 0) pagesWithFindings++;
-      } else {
-        issues += page.counts.total_findings;
-        errors += page.counts.errors;
-        warnings += page.counts.warnings;
-        notices += page.counts.notices;
-        if (page.counts.total_findings > 0) pagesWithFindings++;
-      }
-      brokenLinks += page.counts.broken_links;
-      if (page.scan_error) scanErrors++;
-    }
-
-    return { pages: pages.length, pagesWithFindings, issues, errors, warnings, notices, brokenLinks, scanErrors };
-  }, [pages, hasActiveIssueFilters, issueTypeFilter, issueCodeSearch, issueMessageSearch]);
-
-  // Check if any filters are active (for showing filtered vs total)
-  const hasAnyFilters = pageSearch || statusFilter !== "all" || typeFilter !== "all" || hasActiveIssueFilters;
+  };
 
   return (
-    <div className="relative min-h-screen">
+    <div className="relative h-screen overflow-hidden">
       {/* Background particles */}
       <Particles
         className="absolute inset-0 -z-10"
@@ -140,9 +175,9 @@ function App() {
         color="#6366f1"
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] min-h-screen">
+      <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] h-full">
         {/* Sidebar */}
-        <aside className="sticky top-0 h-screen overflow-auto border-r border-border bg-card/80 backdrop-blur-sm p-4">
+        <aside className="h-full overflow-auto border-r border-border bg-card/80 backdrop-blur-sm p-4">
           <BlurFade delay={0}>
             <h1 className="text-xl font-bold mb-6 bg-linear-to-r from-primary to-info bg-clip-text text-transparent">
               ADA Scan Dashboard
@@ -152,17 +187,31 @@ function App() {
           {/* Scan selector */}
           <BlurFade delay={0.05}>
             <FilterField label="Scan">
-              <select
-                value={scanId}
-                onChange={(e) => setScanId(e.target.value)}
-                className="w-full p-2 rounded-md bg-input border border-border text-foreground focus:ring-2 focus:ring-primary/50 focus:outline-none"
-              >
-                {scans.map((scan) => (
-                  <option key={scan.scan_id} value={scan.scan_id}>
-                    {scan.scan_id} | {scan.status} | {scan.counts.pages_scanned}/{scan.counts.pages_target}
-                  </option>
-                ))}
-              </select>
+              <div className="flex gap-2">
+                <select
+                  value={scanId}
+                  onChange={(e) => setScanId(e.target.value)}
+                  className="flex-1 p-2 rounded-md bg-input border border-border text-foreground focus:ring-2 focus:ring-primary/50 focus:outline-none"
+                >
+                  {scans.map((scan) => (
+                    <option key={scan.scan_id} value={scan.scan_id}>
+                      {scan.scan_id} | {scan.status} | {scan.counts.pages_scanned}/{scan.counts.pages_target}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleRefresh}
+                  className="p-2 rounded-md bg-input border border-border text-foreground hover:bg-muted/50 focus:ring-2 focus:ring-primary/50 focus:outline-none transition-colors"
+                  title="Refresh scan data"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                    <path d="M3 3v5h5" />
+                    <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+                    <path d="M16 16h5v5" />
+                  </svg>
+                </button>
+              </div>
             </FilterField>
           </BlurFade>
 
@@ -259,13 +308,61 @@ function App() {
 
           <BlurFade delay={0.5}>
             <div className="mt-6 text-xs text-muted-foreground">
-              {scans.length} scans available · {pages.length} pages shown
+              {scans.length} scans available · {pagination ? `${pagination.totalFiltered} of ${pagination.total}` : "0"} pages
+              {pagination && pagination.totalPages > 1 && ` · Page ${pagination.page}/${pagination.totalPages}`}
+            </div>
+          </BlurFade>
+
+          {/* Export Section */}
+          <BlurFade delay={0.55}>
+            <div className="mt-6 pt-6 border-t border-border">
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+                Export Results
+              </div>
+              <div className="flex gap-2">
+                <select
+                  value={exportFormat}
+                  onChange={(e) => setExportFormat(e.target.value)}
+                  className="flex-1 p-2 rounded-md bg-input border border-border text-foreground focus:ring-2 focus:ring-primary/50 focus:outline-none text-sm"
+                >
+                  <option value="xlsx">Excel (.xlsx)</option>
+                  <option value="csv">CSV (.csv)</option>
+                  <option value="json">JSON (.json)</option>
+                </select>
+                <button
+                  onClick={handleExport}
+                  disabled={!scanId || exporting}
+                  className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-medium text-sm hover:bg-primary/90 focus:ring-2 focus:ring-primary/50 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                >
+                  {exporting ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Exporting...
+                    </>
+                  ) : (
+                    <>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                      </svg>
+                      Export
+                    </>
+                  )}
+                </button>
+              </div>
+              <div className="mt-2 text-xs text-muted-foreground">
+                {hasAnyFilters ? "Exports filtered results" : "Exports all results"}
+              </div>
             </div>
           </BlurFade>
         </aside>
 
         {/* Main content */}
-        <main className="p-4 lg:p-6">
+        <main className="p-4 lg:p-6 overflow-auto">
           {!scanData ? (
             <div className="flex items-center justify-center h-64 text-muted-foreground">
               No scan loaded.
@@ -281,62 +378,142 @@ function App() {
                 <BlurFade delay={0.18}>
                   <StatCard
                     label="Pages"
-                    value={hasAnyFilters
+                    value={hasAnyFilters && filteredSummary
                       ? <><NumberTicker value={filteredSummary.pages} /> / {scanData.summary.counts.pages_scanned}</>
                       : <><NumberTicker value={scanData.summary.counts.pages_scanned} /> / {scanData.summary.counts.pages_target}</>
                     }
                   />
                 </BlurFade>
                 <BlurFade delay={0.2}>
-                  <StatCard label="With Findings" value={<NumberTicker value={filteredSummary.pagesWithFindings} />} />
+                  <StatCard label="With Findings" value={<NumberTicker value={filteredSummary?.pagesWithFindings ?? scanData.summary.counts.pages_with_findings} />} />
                 </BlurFade>
                 <BlurFade delay={0.22}>
-                  <GlowCard><StatCardInner label="Total Issues" value={<NumberTicker value={filteredSummary.issues} />} /></GlowCard>
+                  <GlowCard><StatCardInner label="Total Issues" value={<NumberTicker value={filteredSummary?.issues ?? scanData.summary.counts.issues} />} /></GlowCard>
                 </BlurFade>
                 <BlurFade delay={0.24}>
-                  <StatCard label="Errors" value={<NumberTicker value={filteredSummary.errors} />} variant="error" />
+                  <StatCard label="Errors" value={<NumberTicker value={filteredSummary?.errors ?? scanData.summary.counts.errors} />} variant="error" />
                 </BlurFade>
                 <BlurFade delay={0.26}>
-                  <StatCard label="Warnings" value={<NumberTicker value={filteredSummary.warnings} />} variant="warning" />
+                  <StatCard label="Warnings" value={<NumberTicker value={filteredSummary?.warnings ?? scanData.summary.counts.warnings} />} variant="warning" />
                 </BlurFade>
                 <BlurFade delay={0.28}>
-                  <StatCard label="Notices" value={<NumberTicker value={filteredSummary.notices} />} variant="info" />
+                  <StatCard label="Notices" value={<NumberTicker value={filteredSummary?.notices ?? scanData.summary.counts.notices} />} variant="info" />
                 </BlurFade>
                 <BlurFade delay={0.3}>
-                  <StatCard label="Broken Links" value={<NumberTicker value={filteredSummary.brokenLinks} />} />
+                  <StatCard label="Broken Links" value={<NumberTicker value={filteredSummary?.brokenLinks ?? scanData.summary.counts.broken_links} />} />
                 </BlurFade>
                 <BlurFade delay={0.32}>
-                  <StatCard label="Scan Errors" value={<NumberTicker value={filteredSummary.scanErrors} />} variant="error" />
+                  <StatCard label="Scan Errors" value={<NumberTicker value={filteredSummary?.scanErrors ?? scanData.summary.counts.scan_errors} />} variant="error" />
                 </BlurFade>
               </section>
 
               {/* Pages list */}
               <section className="space-y-3">
-                {pages.length === 0 ? (
+                {pagesLoading ? (
+                  <div className="text-center py-12 text-muted-foreground">
+                    Loading pages...
+                  </div>
+                ) : pages.length === 0 ? (
                   <div className="text-center py-12 text-muted-foreground">
                     No pages match current filters.
                   </div>
                 ) : (
-                  pages.map((page, i) => {
-                    const filteredIssues = filterIssues(page.issues || []);
-                    const filteredCounts = hasActiveIssueFilters ? getFilteredCounts(page.issues || []) : null;
-                    return (
-                      <BlurFade key={page.url} delay={0.05 + i * 0.02}>
+                  <>
+                    {pages.map((page, i) => (
+                      <BlurFade key={page.url} delay={0.02 + i * 0.01}>
                         <PageCard
                           page={page}
-                          filteredIssues={filteredIssues}
-                          filteredCounts={filteredCounts}
+                          filteredIssues={page.issues}
+                          filteredCounts={page.filteredCounts || null}
                           hasActiveIssueFilters={hasActiveIssueFilters}
                         />
                       </BlurFade>
-                    );
-                  })
+                    ))}
+
+                    {/* Pagination controls */}
+                    {pagination && pagination.totalPages > 1 && (
+                      <Pagination
+                        currentPage={currentPage}
+                        totalPages={pagination.totalPages}
+                        onPageChange={setCurrentPage}
+                      />
+                    )}
+                  </>
                 )}
               </section>
             </>
           )}
         </main>
       </div>
+    </div>
+  );
+}
+
+function Pagination({ currentPage, totalPages, onPageChange }) {
+  // Generate page numbers to show
+  const getPageNumbers = () => {
+    const pages = [];
+    const maxVisible = 7;
+
+    if (totalPages <= maxVisible) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      // Always show first page
+      pages.push(1);
+
+      if (currentPage > 3) pages.push("...");
+
+      // Show pages around current
+      const start = Math.max(2, currentPage - 1);
+      const end = Math.min(totalPages - 1, currentPage + 1);
+
+      for (let i = start; i <= end; i++) pages.push(i);
+
+      if (currentPage < totalPages - 2) pages.push("...");
+
+      // Always show last page
+      pages.push(totalPages);
+    }
+
+    return pages;
+  };
+
+  return (
+    <div className="flex items-center justify-center gap-1 mt-6">
+      <button
+        onClick={() => onPageChange(currentPage - 1)}
+        disabled={currentPage === 1}
+        className="px-3 py-2 rounded-md bg-input border border-border text-foreground hover:bg-muted/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      >
+        ← Prev
+      </button>
+
+      {getPageNumbers().map((page, idx) => (
+        page === "..." ? (
+          <span key={`ellipsis-${idx}`} className="px-2 text-muted-foreground">...</span>
+        ) : (
+          <button
+            key={page}
+            onClick={() => onPageChange(page)}
+            className={cn(
+              "w-10 h-10 rounded-md border transition-colors",
+              currentPage === page
+                ? "bg-primary text-primary-foreground border-primary"
+                : "bg-input border-border text-foreground hover:bg-muted/50"
+            )}
+          >
+            {page}
+          </button>
+        )
+      ))}
+
+      <button
+        onClick={() => onPageChange(currentPage + 1)}
+        disabled={currentPage === totalPages}
+        className="px-3 py-2 rounded-md bg-input border border-border text-foreground hover:bg-muted/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      >
+        Next →
+      </button>
     </div>
   );
 }

@@ -27,6 +27,8 @@ export async function analyzePage(page, url, options = {}) {
     ignore: [],
   });
 
+	console.log(pa11yResult)
+
   const issues = (pa11yResult.issues || []).map(normalizeIssue);
 
   // Extract links from page for broken link checking
