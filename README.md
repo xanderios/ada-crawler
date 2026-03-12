@@ -1,4 +1,4 @@
-#Goal
+# Goal
 
 Crawl entire site, parse DOM, run accessibility checks, output structured data.
 
