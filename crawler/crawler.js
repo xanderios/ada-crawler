@@ -21,12 +21,33 @@ program
   .name("crawler")
   .description("ADA accessibility crawler - scans pages for WCAG compliance")
   .requiredOption("--url <url>", "Base URL to scan (required)")
-  .option("-l, --limit <number>", "Maximum number of pages to scan", (v) => parseInt(v, 10))
+  .option("-l, --limit <number>", "Maximum number of pages to scan", (v) =>
+    parseInt(v, 10),
+  )
   .option("--runner <runner>", "Accessibility runner (htmlcs or axe)", "htmlcs")
-  .option("--include <patterns...>", "Include URLs matching glob or /regex/ patterns")
-  .option("--exclude <patterns...>", "Exclude URLs matching glob or /regex/ patterns")
+  .option(
+    "--links-only",
+    "Skip accessibility checks, only scan for broken links",
+  )
+  .option(
+    "--include <patterns...>",
+    "Include URLs matching glob or /regex/ patterns",
+  )
+  .option(
+    "--exclude <patterns...>",
+    "Exclude URLs matching glob or /regex/ patterns",
+  )
+  .option(
+    "--exclude-domains <domains...>",
+    "Skip link checking for these domains (e.g., facebook.com,tiktok.com)",
+  )
   .option("--same-origin-only", "Only scan URLs from the same origin as --url")
-  .option("--concurrency <number>", "Number of parallel page workers", (v) => parseInt(v, 10), 4)
+  .option(
+    "--concurrency <number>",
+    "Number of parallel page workers",
+    (v) => parseInt(v, 10),
+    4,
+  )
   .helpOption("-h, --help", "Display help for command");
 
 program.parse();
@@ -124,9 +145,7 @@ async function getSitemapUrls() {
       const parsed = await xml2js.parseStringPromise(res.data);
 
       if (parsed.urlset?.url?.length) {
-        let urls = parsed.urlset.url
-          .map((u) => u.loc?.[0])
-          .filter(Boolean);
+        let urls = parsed.urlset.url.map((u) => u.loc?.[0]).filter(Boolean);
         urls = filterUrls(urls);
         return MAX_PAGES ? urls.slice(0, MAX_PAGES) : urls;
       }
@@ -150,9 +169,8 @@ async function getSitemapUrls() {
 
             const childParsed = await xml2js.parseStringPromise(childRes.data);
             const childUrls =
-              childParsed.urlset?.url
-                ?.map((u) => u.loc?.[0])
-                .filter(Boolean) || [];
+              childParsed.urlset?.url?.map((u) => u.loc?.[0]).filter(Boolean) ||
+              [];
 
             urls.push(...childUrls);
           } catch {
@@ -193,7 +211,7 @@ async function main() {
       format:
         "Scanning [{bar}] {percentage}% | {value}/{total} pages | stop={stop}",
     },
-    cliProgress.Presets.shades_classic
+    cliProgress.Presets.shades_classic,
   );
 
   progressBar.start(urls.length, 0, { stop: "no" });
@@ -219,12 +237,16 @@ async function main() {
             waitUntil: "domcontentloaded",
           });
 
-          const result = await analyzePage(page, url, { runner: RUNNER });
+          const result = await analyzePage(page, url, {
+            runner: RUNNER,
+            linksOnly: options.linksOnly,
+            excludeDomains: options.excludeDomains || [],
+          });
           await appendPageResult(result);
         } catch (err) {
           await appendPageResult({
             url,
-            runner: RUNNER,
+            runner: options.linksOnly ? "links-only" : RUNNER,
             issues: [],
             scan_error: err?.message || "unknown_error",
             custom: {
@@ -244,7 +266,7 @@ async function main() {
 
   try {
     const workers = Array.from({ length: PAGE_CONCURRENCY }, () =>
-      limit(() => worker())
+      limit(() => worker()),
     );
 
     await Promise.all(workers);

@@ -18,18 +18,22 @@ function normalizeIssue(issue) {
 
 export async function analyzePage(page, url, options = {}) {
   const runner = options.runner || DEFAULT_RUNNER;
+  let issues = [];
 
-  const pa11yResult = await pa11y(url, {
-    runner,
-    standard: "WCAG2AA",
-    timeout: 30000,
-    wait: 500,
-    ignore: [],
-  });
+  // Only run pa11y if not in links-only mode
+  if (!options.linksOnly) {
+    const pa11yResult = await pa11y(url, {
+      runner,
+      standard: "WCAG2AA",
+      timeout: 30000,
+      wait: 500,
+      ignore: [],
+    });
 
-	console.log(pa11yResult)
+    console.log(pa11yResult);
 
-  const issues = (pa11yResult.issues || []).map(normalizeIssue);
+    issues = (pa11yResult.issues || []).map(normalizeIssue);
+  }
 
   // Extract links from page for broken link checking
   const links = await page.$$eval("a[href]", (anchors) =>
@@ -38,16 +42,18 @@ export async function analyzePage(page, url, options = {}) {
       text: (a.innerText || a.textContent || "").trim(),
       rel: a.getAttribute("rel"),
       target: a.getAttribute("target"),
-    }))
+    })),
   );
 
   // Get browser context from the page for link checking
   const context = page.context();
-  const brokenLinks = await checkLinks(links, context);
+  const brokenLinks = await checkLinks(links, context, {
+    excludeDomains: options.excludeDomains || [],
+  });
 
   return {
     url,
-    runner,
+    runner: options.linksOnly ? "links-only" : runner,
     issues,
     scan_error: null,
     custom: {

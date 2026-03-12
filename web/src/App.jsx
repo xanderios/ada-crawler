@@ -46,6 +46,13 @@ function App() {
   const [issueCodeSearch, setIssueCodeSearch] = useState("");
   const [issueMessageSearch, setIssueMessageSearch] = useState("");
 
+  // Exclude filters (client-side hiding)
+  const [excludeTypes, setExcludeTypes] = useState([]);
+  const [excludeCodes, setExcludeCodes] = useState([]);
+  const [excludeMessages, setExcludeMessages] = useState([]);
+  const [excludeInput, setExcludeInput] = useState("");
+  const [excludeMode, setExcludeMode] = useState("code"); // 'type', 'code', or 'message'
+
   // Export state
   const [exportFormat, setExportFormat] = useState("xlsx");
   const [exporting, setExporting] = useState(false);
@@ -106,17 +113,34 @@ function App() {
         setFilteredSummary(data.filteredSummary);
         setPagesLoading(false);
       });
-  }, [scanId, currentPage, pageLimit, debouncedPageSearch, statusFilter, issueTypeFilter, debouncedIssueCode, debouncedIssueMessage]);
+  }, [
+    scanId,
+    currentPage,
+    pageLimit,
+    debouncedPageSearch,
+    statusFilter,
+    issueTypeFilter,
+    debouncedIssueCode,
+    debouncedIssueMessage,
+  ]);
 
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [debouncedPageSearch, statusFilter, issueTypeFilter, debouncedIssueCode, debouncedIssueMessage]);
+  }, [
+    debouncedPageSearch,
+    statusFilter,
+    issueTypeFilter,
+    debouncedIssueCode,
+    debouncedIssueMessage,
+  ]);
 
   // Refresh handler
   const handleRefresh = async () => {
     if (!scanId) return;
-    await fetch(`/api/scans/${encodeURIComponent(scanId)}/refresh`, { method: "POST" });
+    await fetch(`/api/scans/${encodeURIComponent(scanId)}/refresh`, {
+      method: "POST",
+    });
     fetchScans();
     // Re-fetch scan data
     const res = await fetch(`/api/scans/${encodeURIComponent(scanId)}`);
@@ -127,8 +151,60 @@ function App() {
   };
 
   // Check if any filters are active
-  const hasAnyFilters = pageSearch || statusFilter !== "all" ||
+  const hasAnyFilters =
+    pageSearch ||
+    statusFilter !== "all" ||
+    issueTypeFilter !== "all" ||
+    issueCodeSearch ||
+    issueMessageSearch;
+  const hasActiveIssueFilters =
     issueTypeFilter !== "all" || issueCodeSearch || issueMessageSearch;
+  const hasExcludes =
+    excludeTypes.length > 0 ||
+    excludeCodes.length > 0 ||
+    excludeMessages.length > 0;
+
+  // Handlers for exclude filters
+  const addExclude = () => {
+    const trimmed = excludeInput.trim();
+    if (!trimmed) return;
+
+    if (excludeMode === "type") {
+      if (
+        ["error", "warning", "notice"].includes(trimmed.toLowerCase()) &&
+        !excludeTypes.includes(trimmed.toLowerCase())
+      ) {
+        setExcludeTypes([...excludeTypes, trimmed.toLowerCase()]);
+      }
+    } else if (excludeMode === "code") {
+      if (!excludeCodes.includes(trimmed)) {
+        setExcludeCodes([...excludeCodes, trimmed]);
+      }
+    } else if (excludeMode === "message") {
+      if (!excludeMessages.includes(trimmed)) {
+        setExcludeMessages([...excludeMessages, trimmed]);
+      }
+    }
+    setExcludeInput("");
+  };
+
+  const removeExcludeType = (type) => {
+    setExcludeTypes(excludeTypes.filter((t) => t !== type));
+  };
+
+  const removeExcludeCode = (code) => {
+    setExcludeCodes(excludeCodes.filter((c) => c !== code));
+  };
+
+  const removeExcludeMessage = (msg) => {
+    setExcludeMessages(excludeMessages.filter((m) => m !== msg));
+  };
+
+  const clearAllExcludes = () => {
+    setExcludeTypes([]);
+    setExcludeCodes([]);
+    setExcludeMessages([]);
+  };
 
   // Export handler
   const handleExport = async () => {
@@ -191,7 +267,8 @@ function App() {
                 >
                   {scans.map((scan) => (
                     <option key={scan.scan_id} value={scan.scan_id}>
-                      {scan.scan_id} | {scan.status} | {scan.counts.pages_scanned}/{scan.counts.pages_target}
+                      {scan.scan_id} | {scan.status} |{" "}
+                      {scan.counts.pages_scanned}/{scan.counts.pages_target}
                     </option>
                   ))}
                 </select>
@@ -200,7 +277,17 @@ function App() {
                   className="p-2 rounded-md bg-input border border-border text-foreground hover:bg-muted/50 focus:ring-2 focus:ring-primary/50 focus:outline-none transition-colors"
                   title="Refresh scan data"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
                     <path d="M3 3v5h5" />
                     <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
@@ -285,10 +372,145 @@ function App() {
             </>
           )}
 
+          {/* Exclude Filters */}
+          <BlurFade delay={0.4}>
+            <div className="mt-6 mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+              <span>Exclude Filters (Hide Matching)</span>
+              {hasExcludes && (
+                <button
+                  onClick={clearAllExcludes}
+                  className="text-xs font-normal lowercase text-destructive hover:underline"
+                >
+                  clear all
+                </button>
+              )}
+            </div>
+          </BlurFade>
+
+          <BlurFade delay={0.45}>
+            <FilterField label="Add Exclude Filter">
+              <div className="flex gap-2 mb-2">
+                <select
+                  value={excludeMode}
+                  onChange={(e) => setExcludeMode(e.target.value)}
+                  className="p-2 rounded-md bg-input border border-border text-foreground focus:ring-2 focus:ring-primary/50 focus:outline-none text-sm"
+                >
+                  <option value="type">Type</option>
+                  <option value="code">Code</option>
+                  <option value="message">Message</option>
+                </select>
+                <input
+                  value={excludeInput}
+                  onChange={(e) => setExcludeInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && addExclude()}
+                  placeholder={
+                    excludeMode === "type"
+                      ? "error, warning, or notice"
+                      : excludeMode === "code"
+                        ? "WCAG code to hide"
+                        : "message text to hide"
+                  }
+                  className="flex-1 p-2 rounded-md bg-input border border-border text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/50 focus:outline-none text-sm"
+                />
+                <button
+                  onClick={addExclude}
+                  className="px-3 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 focus:ring-2 focus:ring-primary/50 focus:outline-none transition-colors text-sm"
+                >
+                  Add
+                </button>
+              </div>
+
+              {/* Display active exclude filters */}
+              {hasExcludes && (
+                <div className="space-y-2 mt-3">
+                  {excludeTypes.length > 0 && (
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1">
+                        Types:
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {excludeTypes.map((type) => (
+                          <span
+                            key={type}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded bg-destructive/20 text-destructive text-xs border border-destructive/30"
+                          >
+                            {type}
+                            <button
+                              onClick={() => removeExcludeType(type)}
+                              className="hover:bg-destructive/30 rounded px-0.5"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {excludeCodes.length > 0 && (
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1">
+                        Codes:
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {excludeCodes.map((code) => (
+                          <span
+                            key={code}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded bg-destructive/20 text-destructive text-xs border border-destructive/30 font-mono"
+                          >
+                            {code.length > 30
+                              ? code.substring(0, 30) + "..."
+                              : code}
+                            <button
+                              onClick={() => removeExcludeCode(code)}
+                              className="hover:bg-destructive/30 rounded px-0.5"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {excludeMessages.length > 0 && (
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1">
+                        Messages:
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {excludeMessages.map((msg) => (
+                          <span
+                            key={msg}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded bg-destructive/20 text-destructive text-xs border border-destructive/30"
+                          >
+                            {msg.length > 30
+                              ? msg.substring(0, 30) + "..."
+                              : msg}
+                            <button
+                              onClick={() => removeExcludeMessage(msg)}
+                              className="hover:bg-destructive/30 rounded px-0.5"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </FilterField>
+          </BlurFade>
+
           <BlurFade delay={0.5}>
             <div className="mt-6 text-xs text-muted-foreground">
-              {scans.length} scans available · {pagination ? `${pagination.totalFiltered} of ${pagination.total}` : "0"} pages
-              {pagination && pagination.totalPages > 1 && ` · Page ${pagination.page}/${pagination.totalPages}`}
+              {scans.length} scans available ·{" "}
+              {pagination
+                ? `${pagination.totalFiltered} of ${pagination.total}`
+                : "0"}{" "}
+              pages
+              {pagination &&
+                pagination.totalPages > 1 &&
+                ` · Page ${pagination.page}/${pagination.totalPages}`}
             </div>
           </BlurFade>
 
@@ -315,15 +537,41 @@ function App() {
                 >
                   {exporting ? (
                     <>
-                      <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      <svg
+                        className="animate-spin h-4 w-4"
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        ></circle>
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                        ></path>
                       </svg>
                       Exporting...
                     </>
                   ) : (
                     <>
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                         <polyline points="7 10 12 15 17 10" />
                         <line x1="12" y1="15" x2="12" y2="3" />
@@ -334,7 +582,9 @@ function App() {
                 </button>
               </div>
               <div className="mt-2 text-xs text-muted-foreground">
-                {hasAnyFilters ? "Exports filtered results" : "Exports all results"}
+                {hasAnyFilters
+                  ? "Exports filtered results"
+                  : "Exports all results"}
               </div>
             </div>
           </BlurFade>
@@ -350,39 +600,142 @@ function App() {
             <>
               {/* Summary cards */}
               <section className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 mb-6">
-                <BlurFade delay={0.1}><StatCard label="Scan ID" value={scanData.meta.scan_id} /></BlurFade>
-                <BlurFade delay={0.12}><StatCard label="Status" value={scanData.meta.status} /></BlurFade>
-                <BlurFade delay={0.14}><StatCard label="Started" value={fmtDate(scanData.meta.started_at)} small /></BlurFade>
-                <BlurFade delay={0.16}><StatCard label="Finished" value={fmtDate(scanData.meta.finished_at)} small /></BlurFade>
+                <BlurFade delay={0.1}>
+                  <StatCard label="Scan ID" value={scanData.meta.scan_id} />
+                </BlurFade>
+                <BlurFade delay={0.12}>
+                  <StatCard label="Status" value={scanData.meta.status} />
+                </BlurFade>
+                <BlurFade delay={0.14}>
+                  <StatCard
+                    label="Started"
+                    value={fmtDate(scanData.meta.started_at)}
+                    small
+                  />
+                </BlurFade>
+                <BlurFade delay={0.16}>
+                  <StatCard
+                    label="Finished"
+                    value={fmtDate(scanData.meta.finished_at)}
+                    small
+                  />
+                </BlurFade>
                 <BlurFade delay={0.18}>
                   <StatCard
                     label="Pages"
-                    value={hasAnyFilters && filteredSummary
-                      ? <><NumberTicker value={filteredSummary.pages} /> / {scanData.summary.counts.pages_scanned}</>
-                      : <><NumberTicker value={scanData.summary.counts.pages_scanned} /> / {scanData.summary.counts.pages_target}</>
+                    value={
+                      hasAnyFilters && filteredSummary ? (
+                        <>
+                          <NumberTicker value={filteredSummary.pages} /> /{" "}
+                          {scanData.summary.counts.pages_scanned}
+                        </>
+                      ) : (
+                        <>
+                          <NumberTicker
+                            value={scanData.summary.counts.pages_scanned}
+                          />{" "}
+                          / {scanData.summary.counts.pages_target}
+                        </>
+                      )
                     }
                   />
                 </BlurFade>
                 <BlurFade delay={0.2}>
-                  <StatCard label="With Findings" value={<NumberTicker value={filteredSummary?.pagesWithFindings ?? scanData.summary.counts.pages_with_findings} />} />
+                  <StatCard
+                    label="With Findings"
+                    value={
+                      <NumberTicker
+                        value={
+                          filteredSummary?.pagesWithFindings ??
+                          scanData.summary.counts.pages_with_findings
+                        }
+                      />
+                    }
+                  />
                 </BlurFade>
                 <BlurFade delay={0.22}>
-                  <GlowCard><StatCardInner label="Total Issues" value={<NumberTicker value={filteredSummary?.issues ?? scanData.summary.counts.issues} />} /></GlowCard>
+                  <GlowCard>
+                    <StatCardInner
+                      label="Total Issues"
+                      value={
+                        <NumberTicker
+                          value={
+                            filteredSummary?.issues ??
+                            scanData.summary.counts.issues
+                          }
+                        />
+                      }
+                    />
+                  </GlowCard>
                 </BlurFade>
                 <BlurFade delay={0.24}>
-                  <StatCard label="Errors" value={<NumberTicker value={filteredSummary?.errors ?? scanData.summary.counts.errors} />} variant="error" />
+                  <StatCard
+                    label="Errors"
+                    value={
+                      <NumberTicker
+                        value={
+                          filteredSummary?.errors ??
+                          scanData.summary.counts.errors
+                        }
+                      />
+                    }
+                    variant="error"
+                  />
                 </BlurFade>
                 <BlurFade delay={0.26}>
-                  <StatCard label="Warnings" value={<NumberTicker value={filteredSummary?.warnings ?? scanData.summary.counts.warnings} />} variant="warning" />
+                  <StatCard
+                    label="Warnings"
+                    value={
+                      <NumberTicker
+                        value={
+                          filteredSummary?.warnings ??
+                          scanData.summary.counts.warnings
+                        }
+                      />
+                    }
+                    variant="warning"
+                  />
                 </BlurFade>
                 <BlurFade delay={0.28}>
-                  <StatCard label="Notices" value={<NumberTicker value={filteredSummary?.notices ?? scanData.summary.counts.notices} />} variant="info" />
+                  <StatCard
+                    label="Notices"
+                    value={
+                      <NumberTicker
+                        value={
+                          filteredSummary?.notices ??
+                          scanData.summary.counts.notices
+                        }
+                      />
+                    }
+                    variant="info"
+                  />
                 </BlurFade>
                 <BlurFade delay={0.3}>
-                  <StatCard label="Broken Links" value={<NumberTicker value={filteredSummary?.brokenLinks ?? scanData.summary.counts.broken_links} />} />
+                  <StatCard
+                    label="Broken Links"
+                    value={
+                      <NumberTicker
+                        value={
+                          filteredSummary?.brokenLinks ??
+                          scanData.summary.counts.broken_links
+                        }
+                      />
+                    }
+                  />
                 </BlurFade>
                 <BlurFade delay={0.32}>
-                  <StatCard label="Scan Errors" value={<NumberTicker value={filteredSummary?.scanErrors ?? scanData.summary.counts.scan_errors} />} variant="error" />
+                  <StatCard
+                    label="Scan Errors"
+                    value={
+                      <NumberTicker
+                        value={
+                          filteredSummary?.scanErrors ??
+                          scanData.summary.counts.scan_errors
+                        }
+                      />
+                    }
+                    variant="error"
+                  />
                 </BlurFade>
               </section>
 
@@ -405,6 +758,9 @@ function App() {
                           filteredIssues={page.issues}
                           filteredCounts={page.filteredCounts || null}
                           issueTypeFilter={issueTypeFilter}
+                          excludeTypes={excludeTypes}
+                          excludeCodes={excludeCodes}
+                          excludeMessages={excludeMessages}
                         />
                       </BlurFade>
                     ))}
@@ -467,9 +823,11 @@ function Pagination({ currentPage, totalPages, onPageChange }) {
         ← Prev
       </button>
 
-      {getPageNumbers().map((page, idx) => (
+      {getPageNumbers().map((page, idx) =>
         page === "..." ? (
-          <span key={`ellipsis-${idx}`} className="px-2 text-muted-foreground">...</span>
+          <span key={`ellipsis-${idx}`} className="px-2 text-muted-foreground">
+            ...
+          </span>
         ) : (
           <button
             key={page}
@@ -478,13 +836,13 @@ function Pagination({ currentPage, totalPages, onPageChange }) {
               "w-10 h-10 rounded-md border transition-colors",
               currentPage === page
                 ? "bg-primary text-primary-foreground border-primary"
-                : "bg-input border-border text-foreground hover:bg-muted/50"
+                : "bg-input border-border text-foreground hover:bg-muted/50",
             )}
           >
             {page}
           </button>
-        )
-      ))}
+        ),
+      )}
 
       <button
         onClick={() => onPageChange(currentPage + 1)}
@@ -500,7 +858,9 @@ function Pagination({ currentPage, totalPages, onPageChange }) {
 function FilterField({ label, children }) {
   return (
     <div className="mb-3">
-      <label className="block text-xs font-medium text-muted-foreground mb-1.5">{label}</label>
+      <label className="block text-xs font-medium text-muted-foreground mb-1.5">
+        {label}
+      </label>
       {children}
     </div>
   );
@@ -509,7 +869,12 @@ function FilterField({ label, children }) {
 function StatCard({ label, value, variant, small }) {
   return (
     <ShimmerCard>
-      <StatCardInner label={label} value={value} variant={variant} small={small} />
+      <StatCardInner
+        label={label}
+        value={value}
+        variant={variant}
+        small={small}
+      />
     </ShimmerCard>
   );
 }
@@ -524,18 +889,73 @@ function StatCardInner({ label, value, variant, small }) {
   return (
     <>
       <div className="text-xs text-muted-foreground mb-1">{label}</div>
-      <div className={cn("font-semibold", small ? "text-sm" : "text-lg", variantColors[variant])}>
+      <div
+        className={cn(
+          "font-semibold",
+          small ? "text-sm" : "text-lg",
+          variantColors[variant],
+        )}
+      >
         {value}
       </div>
     </>
   );
 }
 
-function PageCard({ page, filteredIssues, filteredCounts, issueTypeFilter }) {
+function PageCard({
+  page,
+  filteredIssues,
+  filteredCounts,
+  issueTypeFilter,
+  excludeTypes,
+  excludeCodes,
+  excludeMessages,
+}) {
+  // Apply client-side exclude filters
+  const displayIssues = filteredIssues.filter((issue) => {
+    // Check if issue type is excluded
+    if (
+      excludeTypes &&
+      excludeTypes.length > 0 &&
+      excludeTypes.includes(issue.type)
+    ) {
+      return false;
+    }
+    // Check if issue code is excluded (substring match)
+    if (
+      excludeCodes &&
+      excludeCodes.length > 0 &&
+      excludeCodes.some((code) =>
+        issue.code.toLowerCase().includes(code.toLowerCase()),
+      )
+    ) {
+      return false;
+    }
+    // Check if issue message is excluded (substring match)
+    if (
+      excludeMessages &&
+      excludeMessages.length > 0 &&
+      excludeMessages.some(
+        (msg) =>
+          issue.message.toLowerCase().includes(msg.toLowerCase()) ||
+          (issue.selector &&
+            issue.selector.toLowerCase().includes(msg.toLowerCase())),
+      )
+    ) {
+      return false;
+    }
+    return true;
+  });
+
   const displayCounts = filteredCounts || page.counts;
   const showIssues = issueTypeFilter !== "broken_link";
-  const showBrokenLinks = issueTypeFilter === "all" || issueTypeFilter === "broken_link";
+  const showBrokenLinks =
+    issueTypeFilter === "all" || issueTypeFilter === "broken_link";
   const hasActiveFilters = issueTypeFilter !== "all";
+  const hasExcludes =
+    (excludeTypes && excludeTypes.length > 0) ||
+    (excludeCodes && excludeCodes.length > 0) ||
+    (excludeMessages && excludeMessages.length > 0);
 
   return (
     <details className="group rounded-lg border border-border bg-card/60 backdrop-blur-sm overflow-hidden">
@@ -547,12 +967,16 @@ function PageCard({ page, filteredIssues, filteredCounts, issueTypeFilter }) {
             {showIssues && (
               <>
                 <Badge variant="error">{displayCounts.errors} errors</Badge>
-                <Badge variant="warning">{displayCounts.warnings} warnings</Badge>
+                <Badge variant="warning">
+                  {displayCounts.warnings} warnings
+                </Badge>
                 <Badge variant="info">{displayCounts.notices} notices</Badge>
               </>
             )}
             {showBrokenLinks && (
-              <Badge>{displayCounts.brokenLinks ?? page.counts.broken_links} broken</Badge>
+              <Badge>
+                {displayCounts.brokenLinks ?? page.counts.broken_links} broken
+              </Badge>
             )}
             {page.scan_error && <Badge variant="destructive">scan error</Badge>}
           </div>
@@ -572,12 +996,18 @@ function PageCard({ page, filteredIssues, filteredCounts, issueTypeFilter }) {
             <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
               Accessibility Issues
               <span className="text-xs font-normal text-muted-foreground">
-                ({filteredIssues.length})
+                ({displayIssues.length}
+                {hasExcludes && filteredIssues.length !== displayIssues.length
+                  ? ` of ${filteredIssues.length}`
+                  : ""}
+                )
               </span>
             </h3>
-            {filteredIssues.length === 0 ? (
+            {displayIssues.length === 0 ? (
               <div className="text-sm text-muted-foreground py-2">
-                {hasActiveFilters ? "No issues match filters" : "No issues found"}
+                {hasActiveFilters || hasExcludes
+                  ? "No issues match filters"
+                  : "No issues found"}
               </div>
             ) : (
               <div className="rounded-md border border-border overflow-hidden">
@@ -587,26 +1017,40 @@ function PageCard({ page, filteredIssues, filteredCounts, issueTypeFilter }) {
                       <th className="p-2 font-medium">Type</th>
                       <th className="p-2 font-medium">Code</th>
                       <th className="p-2 font-medium">Message</th>
-                      <th className="p-2 font-medium hidden lg:table-cell">Selector</th>
-                      <th className="p-2 font-medium hidden xl:table-cell">Context</th>
+                      <th className="p-2 font-medium hidden lg:table-cell">
+                        Selector
+                      </th>
+                      <th className="p-2 font-medium hidden xl:table-cell">
+                        Context
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredIssues.map((issue, idx) => (
+                    {displayIssues.map((issue, idx) => (
                       <tr
                         key={idx}
                         className={cn(
                           "border-t border-border hover:bg-muted/20 transition-colors",
-                          issue.type === "error" && "border-l-2 border-l-destructive",
-                          issue.type === "warning" && "border-l-2 border-l-warning",
-                          issue.type === "notice" && "border-l-2 border-l-info"
+                          issue.type === "error" &&
+                            "border-l-2 border-l-destructive",
+                          issue.type === "warning" &&
+                            "border-l-2 border-l-warning",
+                          issue.type === "notice" && "border-l-2 border-l-info",
                         )}
                       >
-                        <td className="p-2"><TypeBadge type={issue.type} /></td>
-                        <td className="p-2 font-mono text-xs max-w-[200px] break-all">{issue.code}</td>
+                        <td className="p-2">
+                          <TypeBadge type={issue.type} />
+                        </td>
+                        <td className="p-2 font-mono text-xs max-w-[200px] break-all">
+                          {issue.code}
+                        </td>
                         <td className="p-2 text-xs">{issue.message}</td>
-                        <td className="p-2 font-mono text-xs max-w-[150px] break-all hidden lg:table-cell">{issue.selector}</td>
-                        <td className="p-2 font-mono text-xs max-w-[200px] break-all hidden xl:table-cell">{issue.context}</td>
+                        <td className="p-2 font-mono text-xs max-w-[150px] break-all hidden lg:table-cell">
+                          {issue.selector}
+                        </td>
+                        <td className="p-2 font-mono text-xs max-w-[200px] break-all hidden xl:table-cell">
+                          {issue.context}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -620,7 +1064,10 @@ function PageCard({ page, filteredIssues, filteredCounts, issueTypeFilter }) {
         {showBrokenLinks && page.custom.broken_links.length > 0 && (
           <div>
             <h3 className="text-sm font-semibold mb-3">
-              Broken Links <span className="text-xs font-normal text-muted-foreground">({page.custom.broken_links.length})</span>
+              Broken Links{" "}
+              <span className="text-xs font-normal text-muted-foreground">
+                ({page.custom.broken_links.length})
+              </span>
             </h3>
             <div className="rounded-md border border-border overflow-hidden">
               <table className="w-full text-sm">
@@ -633,10 +1080,17 @@ function PageCard({ page, filteredIssues, filteredCounts, issueTypeFilter }) {
                 </thead>
                 <tbody>
                   {page.custom.broken_links.map((link, idx) => (
-                    <tr key={idx} className="border-t border-border hover:bg-muted/20 transition-colors">
-                      <td className="p-2 font-mono text-xs break-all">{link.href}</td>
+                    <tr
+                      key={idx}
+                      className="border-t border-border hover:bg-muted/20 transition-colors"
+                    >
+                      <td className="p-2 font-mono text-xs break-all">
+                        {link.href}
+                      </td>
                       <td className="p-2 text-xs">{link.text}</td>
-                      <td className="p-2"><Badge variant="error">{String(link.status)}</Badge></td>
+                      <td className="p-2">
+                        <Badge variant="error">{String(link.status)}</Badge>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -655,13 +1109,16 @@ function Badge({ children, variant }) {
     warning: "bg-warning/20 text-warning border-warning/30",
     info: "bg-info/20 text-info border-info/30",
     success: "bg-success/20 text-success border-success/30",
-    destructive: "bg-destructive/30 text-destructive-foreground border-destructive",
+    destructive:
+      "bg-destructive/30 text-destructive-foreground border-destructive",
   };
   return (
-    <span className={cn(
-      "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border",
-      variants[variant] || "bg-muted/50 text-muted-foreground border-border"
-    )}>
+    <span
+      className={cn(
+        "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border",
+        variants[variant] || "bg-muted/50 text-muted-foreground border-border",
+      )}
+    >
       {children}
     </span>
   );
@@ -674,10 +1131,12 @@ function TypeBadge({ type }) {
     notice: "bg-info text-info-foreground",
   };
   return (
-    <span className={cn(
-      "inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase",
-      variants[type] || "bg-muted text-muted-foreground"
-    )}>
+    <span
+      className={cn(
+        "inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase",
+        variants[type] || "bg-muted text-muted-foreground",
+      )}
+    >
       {type}
     </span>
   );
