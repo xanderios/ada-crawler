@@ -3,6 +3,9 @@ import { NumberTicker } from "./components/ui/number-ticker";
 import { ShimmerCard, GlowCard } from "./components/ui/shimmer-card";
 import { BlurFade } from "./components/ui/blur-fade";
 import { Particles } from "./components/ui/particles";
+import { Modal } from "./components/Modal";
+import { ScanForm } from "./components/ScanForm";
+import { ScanProgress } from "./components/ScanProgress";
 import { cn } from "./lib/utils";
 import { formatDistanceToNow } from "date-fns";
 
@@ -84,6 +87,11 @@ function App() {
   // Export state
   const [exportFormat, setExportFormat] = useState("xlsx");
   const [exporting, setExporting] = useState(false);
+
+  // New scan modal state
+  const [showScanModal, setShowScanModal] = useState(false);
+  const [runningScanId, setRunningScanId] = useState(null);
+  const [scanStarting, setScanStarting] = useState(false);
 
   // Debounced search values (300ms delay)
   const debouncedPageSearch = useDebounce(pageSearch, 300);
@@ -264,6 +272,53 @@ function App() {
     }
   };
 
+  // Start new scan handler
+  const handleStartScan = async (options) => {
+    setScanStarting(true);
+    try {
+      const res = await fetch("/api/scans/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(options),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to start scan");
+      }
+
+      // Switch to progress view
+      setRunningScanId(data.scanId);
+    } catch (err) {
+      console.error("Start scan error:", err);
+      alert(`Failed to start scan: ${err.message}`);
+    } finally {
+      setScanStarting(false);
+    }
+  };
+
+  // Handle scan completion
+  const handleScanComplete = (completedScanId) => {
+    // Refresh scan list and select the new scan
+    fetchScans();
+    setScanId(completedScanId);
+  };
+
+  // Close scan modal and reset state
+  const closeScanModal = () => {
+    if (!runningScanId) {
+      setShowScanModal(false);
+    }
+  };
+
+  // Handle closing progress view
+  const handleProgressClose = () => {
+    setShowScanModal(false);
+    setRunningScanId(null);
+    // Refresh to show new scan in list
+    fetchScans();
+  };
+
   return (
     <div className="relative h-screen overflow-hidden">
       {/* Background particles */}
@@ -324,6 +379,28 @@ function App() {
                 </button>
               </div>
             </FilterField>
+
+            {/* New Scan Button */}
+            <button
+              onClick={() => setShowScanModal(true)}
+              className="w-full mt-2 px-4 py-2 rounded-md bg-primary text-primary-foreground font-medium hover:bg-primary/90 focus:ring-2 focus:ring-primary/50 focus:outline-none transition-colors flex items-center justify-center gap-2"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              New Scan
+            </button>
           </BlurFade>
 
           <BlurFade delay={0.1}>
@@ -810,6 +887,27 @@ function App() {
           )}
         </main>
       </div>
+
+      {/* New Scan Modal */}
+      <Modal
+        isOpen={showScanModal}
+        onClose={closeScanModal}
+        title={runningScanId ? "Scan Progress" : "Start New Scan"}
+      >
+        {runningScanId ? (
+          <ScanProgress
+            scanId={runningScanId}
+            onComplete={handleScanComplete}
+            onCancel={handleProgressClose}
+          />
+        ) : (
+          <ScanForm
+            onStart={handleStartScan}
+            onCancel={() => setShowScanModal(false)}
+            disabled={scanStarting}
+          />
+        )}
+      </Modal>
     </div>
   );
 }

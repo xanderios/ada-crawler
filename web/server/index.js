@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import apiRouter from "./api.js";
+import { cleanup as cleanupProcesses } from "./processManager.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11,6 +12,9 @@ const isProd = process.env.NODE_ENV === "production";
 
 async function createServer() {
   const app = express();
+
+  // Parse JSON request bodies
+  app.use(express.json());
 
   // API routes must be registered before Vite middleware
   app.use("/api", apiRouter);
@@ -45,5 +49,18 @@ async function createServer() {
     }
   });
 }
+
+// Cleanup on shutdown
+process.on("SIGINT", () => {
+  console.log("\nShutting down...");
+  cleanupProcesses();
+  process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  console.log("\nShutting down...");
+  cleanupProcesses();
+  process.exit(0);
+});
 
 createServer();

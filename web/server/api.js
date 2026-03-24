@@ -3,6 +3,12 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { flattenPagesToRows, generateExport } from "./export.js";
+import {
+  startScan,
+  cancelScan,
+  getProcessInfo,
+  getActiveScans,
+} from "./processManager.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -384,6 +390,110 @@ router.post("/scans/:scanId/refresh", (req, res) => {
 router.post("/cache/clear", (req, res) => {
   scanCache.clear();
   res.json({ success: true });
+});
+
+// ============================================================
+// SCAN RUNNER ENDPOINTS
+// ============================================================
+
+function pad(n) {
+  return String(n).padStart(2, "0");
+}
+
+function generateScanId(date = new Date()) {
+  const yyyy = date.getFullYear();
+  const mm = pad(date.getMonth() + 1);
+  const dd = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const mi = pad(date.getMinutes());
+  const ss = pad(date.getSeconds());
+  return `${yyyy}${mm}${dd}-${hh}${mi}${ss}`;
+}
+
+// POST /api/scans/start - Start a new scan
+router.post("/scans/start", (req, res) => {
+  const options = req.body;
+
+  // Validate required field
+  if (!options.url) {
+    res.status(400).json({ error: "url_required", message: "URL is required" });
+    return;
+  }
+
+  // Validate URL format
+  try {
+    new URL(options.url);
+  } catch {
+    res.status(400).json({ error: "invalid_url", message: "Invalid URL format" });
+    return;
+  }
+
+  // Generate scan ID
+  const scanId = generateScanId();
+
+  try {
+    const result = startScan(scanId, options);
+    res.json({
+      scanId,
+      status: "starting",
+      message: "Scan started successfully",
+      ...result,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "start_failed", message: err.message });
+  }
+});
+
+// GET /api/scans/:scanId/status - Get live scan status
+router.get("/scans/:scanId/status", (req, res) => {
+  const { scanId } = req.params;
+  const scanDir = path.join(OUTPUT_DIR, scanId);
+  const metaPath = path.join(scanDir, "meta.json");
+
+  // Get process info (if still tracked)
+  const processInfo = getProcessInfo(scanId);
+
+  // Try to read meta.json for live progress
+  let meta = null;
+  if (fs.existsSync(metaPath)) {
+    try {
+      meta = safeReadJson(metaPath);
+    } catch {
+      // File might be mid-write, ignore
+    }
+  }
+
+  if (!meta && !processInfo) {
+    res.status(404).json({ error: "scan_not_found" });
+    return;
+  }
+
+  res.json({
+    scanId,
+    processInfo,
+    meta: meta
+      ? {
+          status: meta.status,
+          base_url: meta.base_url,
+          started_at: meta.started_at,
+          finished_at: meta.finished_at,
+          counts: meta.counts,
+        }
+      : null,
+  });
+});
+
+// POST /api/scans/:scanId/cancel - Cancel a running scan
+router.post("/scans/:scanId/cancel", (req, res) => {
+  const { scanId } = req.params;
+  const result = cancelScan(scanId);
+  res.json(result);
+});
+
+// GET /api/scans/active - Get all active scans
+router.get("/scans/active", (req, res) => {
+  const activeScans = getActiveScans();
+  res.json(activeScans);
 });
 
 export default router;
