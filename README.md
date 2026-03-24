@@ -2,6 +2,95 @@
 
 Crawl entire site, parse DOM, run accessibility checks, output structured data.
 
+# Quick Start
+
+```bash
+# Install dependencies
+pnpm install
+
+# Scan entire site from sitemap
+pnpm scan -- --url https://www.example.com
+
+# Scan specific paths only
+pnpm scan -- --url https://www.example.com --paths /locations /pests
+
+# Scan specific URLs directly
+pnpm scan -- --url https://www.example.com --urls /about /contact /pricing
+```
+
+# CLI Options
+
+| Option | Description | Example |
+|--------|-------------|---------|
+| `--url <url>` | **Required.** Base URL to scan | `--url https://www.orkin.com` |
+| `-l, --limit <n>` | Maximum number of pages to scan | `--limit 100` |
+| `--runner <runner>` | Accessibility runner (`htmlcs` or `axe`) | `--runner axe` |
+| `--links-only` | Skip accessibility checks, only scan for broken links | `--links-only` |
+| `--paths <prefixes...>` | Include URLs matching path prefixes | `--paths /locations /pests` |
+| `--urls <urls...>` | Scan specific URLs directly (bypasses sitemap) | `--urls /about /contact` |
+| `--include <patterns...>` | Include URLs matching glob or `/regex/` patterns | `--include '**/locations/**'` |
+| `--exclude <patterns...>` | Exclude URLs matching glob or `/regex/` patterns | `--exclude '**/admin/**'` |
+| `--exclude-domains <domains...>` | Skip link checking for these domains | `--exclude-domains facebook.com` |
+| `--same-origin-only` | Only scan URLs from the same origin | `--same-origin-only` |
+| `--concurrency <n>` | Number of parallel page workers (default: 4) | `--concurrency 8` |
+
+## URL Filtering Approaches
+
+The crawler supports three complementary approaches for filtering which URLs to scan:
+
+### 1. Path Prefixes (`--paths`)
+The simplest and most intuitive option. Matches any URL whose path starts with the given prefix.
+
+```bash
+# Scan all location pages
+--paths /locations
+
+# Scan multiple sections
+--paths /locations /pests /services
+```
+
+### 2. Literal URLs (`--urls`)
+Scan specific URLs directly, bypassing sitemap discovery entirely. Useful for targeted testing.
+
+```bash
+# Test specific pages
+--urls /about /contact /pricing
+
+# Full URLs also work
+--urls https://www.example.com/about https://www.example.com/contact
+```
+
+### 3. Pattern Matching (`--include` / `--exclude`)
+For complex filtering using glob patterns or regular expressions.
+
+```bash
+# Glob patterns
+--include '**/locations/**'
+--exclude '**/admin/**' '**/staging/**'
+
+# Regex patterns (wrapped in /.../)
+--include '/locations\/[a-z]{2}\//i'
+--exclude '/\?.*utm_/'
+```
+
+### Combining Filters
+
+Filters are applied in this order:
+1. `--same-origin-only` - Must match same origin
+2. `--exclude` - Remove matching URLs
+3. `--paths` - Must match path prefix (if specified)
+4. `--include` - Must match pattern (if specified)
+
+```bash
+# Scan Florida locations only, excluding staging
+pnpm scan -- \
+  --url https://www.orkin.com \
+  --paths /locations/florida \
+  --exclude '**/staging/**'
+```
+
+See [docs/examples.md](docs/examples.md) for more usage examples.
+
 # 1. Tech Stack
 
 Crawlee
@@ -41,30 +130,49 @@ Avoid:
 - Hash URLs to avoid reprocessing.
 
 # 3. Accessibility Checks (Target)
-## Images
 
-Check:
+## Standard Checks (axe-core / HTML_CodeSniffer)
 
-`<img>` without alt
-`<img alt="">`
-`<img alt="image" / "photo" / etc>`
+Automated WCAG 2.AA compliance checks via pa11y.
 
-Fields to collect:
+## Custom Checks
+
+Since automated tools miss certain accessibility issues, custom DOM checks have been added:
+
+### Images
+
+**Custom checks for non-compliant alt text:**
+- Filenames as alt text (e.g., `alt="Orkin-Top-10-Mosquito---Website-Image.jpg"`)
+- Generic placeholder text (e.g., `alt="Alt Text 1"`, `alt="Alt Icon 2"`, `alt="image"`, `alt="photo"`)
+- Numbers only (e.g., `alt="225"`)
+- Very short alt text (< 3 characters)
+
+**Standard checks:**
+- `<img>` without alt attribute
+- `<img alt="">` (decorative images)
+
+Fields collected:
 
 `src`
 `alt`
 `width`
 `height`
 
-## Links
+### Links
 
-Check:
+**Custom checks for non-descriptive link text:**
+- Generic CTAs: "Click here", "Learn more", "Read more", "See more"
+- Single vague words: "Here", "More", "Link", "Continue"
+- Very short text (1-2 characters, excluding anchor links)
 
-404 links
-5xx links
-redirect loops
-empty href
-`javascript:void(0)`
+Note: Links with descriptive `aria-label` or `title` attributes are excluded.
+
+**Standard checks:**
+- 404 links
+- 5xx links
+- Redirect loops
+- Empty href
+- `javascript:void(0)`
 
 Method:
 

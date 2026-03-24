@@ -38,6 +38,18 @@ program
     "Exclude URLs matching glob or /regex/ patterns",
   )
   .option(
+    "--paths <prefixes...>",
+    "Include URLs matching path prefixes (e.g., /locations /pests)",
+  )
+  .option(
+    "--urls <urls...>",
+    "Scan specific URLs directly (bypasses sitemap discovery)",
+  )
+  .option(
+    "--sitemap <url>",
+    "Custom sitemap URL to use instead of auto-discovery",
+  )
+  .option(
     "--exclude-domains <domains...>",
     "Skip link checking for these domains (e.g., facebook.com,tiktok.com)",
   )
@@ -92,11 +104,30 @@ function createMatcher(pattern) {
 }
 
 /**
- * Filter URLs based on include/exclude patterns and same-origin setting
+ * Check if a URL matches any of the given path prefixes
+ * @param {string} url - Full URL to check
+ * @param {string[]} prefixes - Array of path prefixes (e.g., ['/locations', '/pests'])
+ */
+function matchesPathPrefix(url, prefixes) {
+  try {
+    const { pathname } = new URL(url);
+    return prefixes.some((prefix) => {
+      // Normalize prefix to ensure it starts with /
+      const normalizedPrefix = prefix.startsWith("/") ? prefix : `/${prefix}`;
+      return pathname.startsWith(normalizedPrefix);
+    });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Filter URLs based on include/exclude patterns, path prefixes, and same-origin setting
  */
 function filterUrls(urls) {
   const includeMatcher = options.include?.map(createMatcher);
   const excludeMatcher = options.exclude?.map(createMatcher);
+  const pathPrefixes = options.paths;
 
   return urls.filter((url) => {
     // Same-origin check
@@ -111,6 +142,11 @@ function filterUrls(urls) {
 
     // Exclude patterns (if any match, exclude the URL)
     if (excludeMatcher?.some((matcher) => matcher(url))) {
+      return false;
+    }
+
+    // Path prefix matching (if specified, URL path must start with one of the prefixes)
+    if (pathPrefixes?.length && !matchesPathPrefix(url, pathPrefixes)) {
       return false;
     }
 
@@ -132,7 +168,10 @@ process.on("SIGINT", async () => {
 });
 
 async function getSitemapUrls() {
-  const candidates = [`${BASE}/sitemap.xml`, `${BASE}/sitemap_index.xml`];
+  // Use custom sitemap URL if provided, otherwise try default locations
+  const candidates = options.sitemap
+    ? [options.sitemap]
+    : [`${BASE}/sitemap.xml`, `${BASE}/sitemap_index.xml`];
 
   for (const sitemapUrl of candidates) {
     try {
@@ -190,11 +229,35 @@ async function getSitemapUrls() {
   return [];
 }
 
+/**
+ * Get URLs to scan - either from --urls option or sitemap discovery
+ */
+async function getUrlsToScan() {
+  // If --urls is provided, use those directly (bypasses sitemap)
+  if (options.urls?.length) {
+    let urls = options.urls.map((url) => {
+      // If URL is a path, prepend the base URL
+      if (url.startsWith("/")) {
+        return `${BASE}${url}`;
+      }
+      return url;
+    });
+
+    // Still apply exclude patterns and same-origin checks
+    urls = filterUrls(urls);
+    return MAX_PAGES ? urls.slice(0, MAX_PAGES) : urls;
+  }
+
+  // Otherwise, discover URLs from sitemap
+  return getSitemapUrls();
+}
+
 async function main() {
-  const urls = await getSitemapUrls();
+  const urls = await getUrlsToScan();
 
   if (!urls.length) {
-    console.error("No URLs found from sitemap.");
+    const source = options.urls?.length ? "--urls list" : "sitemap";
+    console.error(`No URLs found from ${source}.`);
     process.exit(1);
   }
 

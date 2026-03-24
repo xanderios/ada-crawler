@@ -1,12 +1,13 @@
 import { cn } from "../../lib/utils";
 
-export function ShimmerCard({ children, className }) {
+export function ShimmerCard({ children, className, title }) {
   return (
     <div
       className={cn(
         "relative overflow-hidden rounded-lg border border-border bg-card p-4",
         className
       )}
+      title={title}
     >
       {children}
     </div>

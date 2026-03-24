@@ -4,10 +4,38 @@ import { ShimmerCard, GlowCard } from "./components/ui/shimmer-card";
 import { BlurFade } from "./components/ui/blur-fade";
 import { Particles } from "./components/ui/particles";
 import { cn } from "./lib/utils";
+import { formatDistanceToNow } from "date-fns";
 
 function fmtDate(iso) {
   if (!iso) return "-";
   return new Date(iso).toLocaleString();
+}
+
+function fmtRelativeTime(iso) {
+  if (!iso) return "-";
+  return formatDistanceToNow(new Date(iso), { addSuffix: true, includeSeconds: true });
+}
+
+function fmtDuration(startIso, endIso) {
+  if (!startIso || !endIso) return "-";
+  const start = new Date(startIso);
+  const end = new Date(endIso);
+  const diffMs = end - start;
+  if (diffMs < 0) return "-";
+
+  const totalSeconds = Math.floor(diffMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    // For durations over an hour, drop seconds (Option B)
+    return `${hours}h ${minutes}m`;
+  } else if (minutes > 0) {
+    return `${minutes} min ${seconds} sec`;
+  } else {
+    return `${seconds} sec`;
+  }
 }
 
 // Debounce hook for search inputs
@@ -609,14 +637,16 @@ function App() {
                 <BlurFade delay={0.14}>
                   <StatCard
                     label="Started"
-                    value={fmtDate(scanData.meta.started_at)}
+                    value={fmtRelativeTime(scanData.meta.started_at)}
+                    title={fmtDate(scanData.meta.started_at)}
                     small
                   />
                 </BlurFade>
                 <BlurFade delay={0.16}>
                   <StatCard
-                    label="Finished"
-                    value={fmtDate(scanData.meta.finished_at)}
+                    label="Duration"
+                    value={fmtDuration(scanData.meta.started_at, scanData.meta.finished_at)}
+                    title={`${fmtDate(scanData.meta.started_at)} → ${fmtDate(scanData.meta.finished_at)}`}
                     small
                   />
                 </BlurFade>
@@ -866,9 +896,9 @@ function FilterField({ label, children }) {
   );
 }
 
-function StatCard({ label, value, variant, small }) {
+function StatCard({ label, value, variant, small, title }) {
   return (
-    <ShimmerCard>
+    <ShimmerCard title={title}>
       <StatCardInner
         label={label}
         value={value}
